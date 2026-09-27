@@ -136,7 +136,7 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .night .d { font-size: 12px; color: var(--text-2); font-weight: 600; }
 .night .p { font-size: 12px; color: var(--muted); line-height: 1.25; min-height: 30px; }
 .night .pct { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
-.night .mini { font-size: 11px; color: var(--muted); display: flex; gap: 8px; }
+.night .mini { font-size: 11px; color: var(--text-2); line-height: 1.35; }
 .tag-arctic { font-size: 9px; letter-spacing: .1em; color: #9085e9; border: 1px solid #4a3f96; border-radius: 4px; padding: 0 4px; width: max-content; }
 
 /* ---------- charts ---------- */

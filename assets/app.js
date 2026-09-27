@@ -137,8 +137,8 @@
         : `no weather model reaches this night yet; in past Octobers ${pct(c.p_clim)} of nights here had a clear gap`);
     const need = kpNeedText(n.kp_req);
     const rows = [
-      ['Activity', n.factors.activity, `${need[0].toUpperCase() + need.slice(1)} · forecast Kp ≈${a.kp != null ? a.kp.toFixed(1) : '–'} (${esc(a.kp_src || '–')})`],
-      ['Clear sky', n.factors.clear, clearWhy],
+      ['Aurora strong enough', n.factors.activity, `${need[0].toUpperCase() + need.slice(1)} · forecast Kp ≈${a.kp != null ? a.kp.toFixed(1) : '–'} (${esc(a.kp_src || '–')})`],
+      ['Clear-sky chance', n.factors.clear, clearWhy],
       ['Darkness', n.factors.darkness, `Dark ${n.dark.start}–${n.dark.end} ship time (${n.dark.hours} h)`],
       ['Moon & lights', n.factors.moon_lights, `Moon ${Math.round(n.moon.illum * 100)}% lit, up ${pct(n.moon.up_frac_dark)} of the dark hours${n.state === 'port' ? ' · in port (town lights)' : ' · at sea (darkest skies)'}`],
     ];
@@ -149,7 +149,7 @@
 
   function formula(n) {
     const f = n.factors;
-    return `<div class="formula">Chance = activity ${pct(f.activity)} × clear sky ${pct(f.clear)} × darkness ${pct(f.darkness)} × moon &amp; lights ${pct(f.moon_lights)} = <b style="color:#fff">${pct(n.score)}</b>
+    return `<div class="formula">Chance = aurora ${pct(f.activity)} × clear-sky ${pct(f.clear)} × darkness ${pct(f.darkness)} × moon &amp; lights ${pct(f.moon_lights)} = <b style="color:#fff">${pct(n.score)}</b>
       · ${confSig(n.confidence, true)} · looking ${n.lead_days > 0 ? n.lead_days.toFixed(1) + ' days ahead' : 'at tonight'}</div>`;
   }
 
@@ -187,7 +187,7 @@
         <div class="p">${esc(shortPlace(n.place))}</div>
         <div class="pct">${pct(n.score)}</div>
         <div>${chip(n.rating)}</div>
-        <div class="mini"><span>Act ${pct(n.factors.activity)}</span><span>Clear ${pct(n.factors.clear)}</span>${n.clear.p_met != null ? '<span class="mettag">MET</span>' : ''}</div>
+        <div class="mini">Aurora ${pct(n.factors.activity)} × Clear-sky ${pct(n.factors.clear)}${n.factors.darkness * n.factors.moon_lights < 0.95 ? ` × dark &amp; moon ${pct(n.factors.darkness * n.factors.moon_lights)}` : ''} = ${pct(n.score)}${n.clear.p_met != null ? ' <span class="mettag">MET</span>' : ''}</div>
         ${confSig(n.confidence, false)}
       </button>`).join('');
     document.querySelectorAll('.night').forEach((b) => b.addEventListener('click', () => {
@@ -373,8 +373,9 @@
         <div>${factorRows(n)}<ul class="notes" style="margin-top:10px">${n.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
         <div>
           <div class="legend">
-            <span><i style="background:#3987e5${hasMet ? '' : ';opacity:.35'}"></i>Cloud cover, ${hasMet ? 'MET Norway' : 'global models (low skill)'} · below the dashed 40% line = clear enough</span>
-            <span><i class="line" style="background:#d95926"></i>Chance activity is strong enough here</span>
+            <span><i style="background:#3987e5${hasMet ? '' : ';opacity:.35'}"></i>Cloud cover, ${hasMet ? 'MET Norway' : 'global models (low skill)'} (left axis) · below the white 40% line = clear enough</span>
+            <span><i class="line" style="background:#e8743b"></i>Kp forecast (right axis)</span>
+            <span><i class="line" style="background:repeating-linear-gradient(90deg,#e8743b 0 6px,transparent 6px 10px)"></i>Kp needed here · solid above dashed = strong enough</span>
             <span><i class="band"></i>Dark hours</span>
           </div>
           <div class="chart" id="${chartId}"></div>
@@ -393,13 +394,23 @@
   function drawHourly(n, cont) {
     if (!cont || !n) return;
     const hours = n.hourly;
-    const W = widthOf(cont), H = 250, ml = 38, mr = 8, mt = 10, mb = 46;
+    // Left axis: cloud cover % (blue). Right axis: Kp (orange), as the user asked for one combined chart.
+    const W = widthOf(cont), H = 262, ml = 40, mr = 30, mt = 22, mb = 46;
     const pw = W - ml - mr, ph = H - mt - mb;
     const bw = pw / hours.length;
     const y = (v) => mt + ph - (v / 100) * ph;
+    const kMax = Math.max(6, Math.ceil(Math.max(...hours.map((h) => Math.max(h.kp, h.kp_req))) + 1));
+    const yk = (k) => mt + ph - (Math.min(k, kMax) / kMax) * ph;
+    const CLOUD_C = '#6da7ec', KP_C = '#e8743b';
     let g = '';
     hours.forEach((h, i) => { g += `<rect x="${ml + i * bw}" y="${mt}" width="${bw + 0.5}" height="${ph}" fill="${h.dark ? '#0e0f11' : '#23252b'}"/>`; });
-    g += gridY(y, ml, W - mr, [0, 25, 50, 75, 100], (v) => v + '%');
+    for (const v of [0, 25, 50, 75, 100]) {
+      g += `<line x1="${ml}" x2="${W - mr}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? '#383835' : '#2c2c2a'}"/>`;
+      g += `<text x="${ml - 6}" y="${y(v) + 4}" text-anchor="end" style="fill:${CLOUD_C}">${v}%</text>`;
+    }
+    for (let k = 0; k <= kMax; k += kMax > 6 ? 2 : 1) g += `<text x="${W - mr + 6}" y="${yk(k) + 4}" style="fill:${KP_C}">${k}</text>`;
+    g += `<text x="${ml - 6}" y="${mt - 8}" text-anchor="end" style="fill:${CLOUD_C}">Cloud</text>`;
+    g += `<text x="${W - mr + 6}" y="${mt - 8}" style="fill:${KP_C}">Kp</text>`;
     g += '<g class="hl"></g>';
     // Cloud bars: MET Norway where available (solid), otherwise the global-model average (faded) — same as the table
     hours.forEach((h, i) => {
@@ -410,10 +421,12 @@
       g += `<path d="${roundTopBar(cx - w / 2, y(v), w, y(0) - y(v))}" fill="#3987e5" opacity="${met ? 1 : 0.35}"/>`;
     });
     g += `<line x1="${ml}" x2="${W - mr}" y1="${y(CLEAR_LINE)}" y2="${y(CLEAR_LINE)}" stroke="#fff" stroke-width="1.5" stroke-dasharray="5 4"/>`;
-    g += `<text class="ref" x="${W - mr - 4}" y="${y(CLEAR_LINE) - 5}" text-anchor="end">clear line 40%</text>`;
-    const pts = hours.map((h, i) => [ml + i * bw + bw / 2, y(h.p_act * 100)]);
-    g += `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round"/>`;
-    pts.forEach(([px, py], i) => { if (hours[i].dark) g += `<circle cx="${px}" cy="${py}" r="4" fill="#d95926" stroke="#16171a" stroke-width="2"/>`; });
+    g += `<text class="ref" x="${ml + 4}" y="${y(CLEAR_LINE) - 5}">clear line 40%</text>`;
+    // Kp needed here (dashed) and Kp forecast (solid), both on the right axis
+    const cxs = hours.map((_, i) => ml + i * bw + bw / 2);
+    g += `<polyline points="${hours.map((h, i) => `${cxs[i]},${yk(h.kp_req)}`).join(' ')}" fill="none" stroke="${KP_C}" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.9"/>`;
+    g += `<polyline points="${hours.map((h, i) => `${cxs[i]},${yk(h.kp)}`).join(' ')}" fill="none" stroke="${KP_C}" stroke-width="2.5" stroke-linejoin="round"/>`;
+    hours.forEach((h, i) => { if (h.dark) g += `<circle cx="${cxs[i]}" cy="${yk(h.kp)}" r="4" fill="${KP_C}" stroke="#16171a" stroke-width="2"/>`; });
     const every = bw < 34 ? 3 : 2;
     hours.forEach((h, i) => {
       const cx = ml + i * bw + bw / 2;
