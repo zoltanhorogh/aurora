@@ -229,8 +229,18 @@
     };
     svg.addEventListener('pointermove', handler);
     svg.addEventListener('pointerdown', handler);
-    svg.addEventListener('pointerleave', hide);
+    // Mouse: hide when the pointer leaves. Touch: keep the tooltip after the finger lifts,
+    // until the user taps somewhere else (see the document listener below).
+    svg.addEventListener('pointerleave', (ev) => { if (ev.pointerType === 'mouse') hide(); });
+    openTips.add({ container, hide });
   }
+  const openTips = new Set();
+  document.addEventListener('pointerdown', (ev) => {
+    for (const t of openTips) {
+      if (!document.contains(t.container)) { openTips.delete(t); continue; } // chart was re-rendered
+      if (!t.container.contains(ev.target)) t.hide();
+    }
+  });
   const roundTopBar = (x, y, w, h, r = 4) => {
     if (h <= 0) return '';
     r = Math.min(r, w / 2, h);
@@ -647,7 +657,7 @@
     const loadOvation = async (lat, lon, label) => {
       set('lt-ov', '…', 'loading NOAA model (≈1 MB)');
       try {
-        const o = await getJSON(`${SWPC}/json/ovation_aurora_latest.json`);
+        const o = await getOvation();
         const lon360 = ((lon % 360) + 360) % 360;
         let local = 0, north = 0;
         for (const [glon, glat, p] of o.coordinates) {
@@ -666,9 +676,51 @@
       <button class="btn" id="bz-btn">Load chart (≈1.5 MB)</button><div class="chart" id="bz-chart"></div>`;
     $('#bz-btn').addEventListener('click', loadBz);
 
-    $('#ovation-panel').innerHTML = `<h3>NOAA aurora forecast map (30–90 min)</h3>
-      <img src="${SWPC}/images/animations/ovation/north/latest.jpg?t=${Date.now()}" alt="NOAA OVATION northern hemisphere aurora forecast" loading="lazy">
-      <p class="hint">Green → red = rising probability. Norway sits at about "7 o'clock" on the map. Updates every few minutes.</p>`;
+    $('#ovation-panel').innerHTML = `<h3>Aurora right now over Norway</h3>
+      <p class="hint" style="margin-top:0">NOAA OVATION model: where aurora is likely overhead in the next 30–90 minutes. It is often also visible a few hundred km south of the coloured band, low in the northern sky.</p>
+      <div id="ovmap"><button class="btn" id="ovmap-btn">Load aurora map (≈1 MB)</button></div>
+      <div class="legend" style="margin-top:8px"><span><i style="background:#1faa59"></i>possible (≥5%)</span><span><i style="background:#9fd13b"></i>likely (≥20%)</span><span><i style="background:#f2c230"></i>very likely (≥40%)</span><span><i style="background:#e5533d"></i>strong (≥60%)</span></div>
+      <div class="hint" id="ovmap-meta"></div>`;
+    $('#ovmap-btn').addEventListener('click', drawOvationMap);
+    if (s.sailing) drawOvationMap();
+  }
+
+  // NOAA OVATION grid (1° x 1°) drawn on a Norway-centred map, with route and ship.
+  let OVATION = null;
+  async function getOvation() {
+    if (!OVATION) OVATION = await getJSON(`${SWPC}/json/ovation_aurora_latest.json`);
+    return OVATION;
+  }
+  const ovColor = (p) => (p >= 60 ? '#e5533d' : p >= 40 ? '#f2c230' : p >= 20 ? '#9fd13b' : '#1faa59');
+
+  async function drawOvationMap() {
+    const box = $('#ovmap');
+    if (!window.L) { box.innerHTML = '<div class="empty">Map library could not load (offline?).</div>'; return; }
+    box.innerHTML = '<div class="empty">Loading NOAA model…</div>';
+    let o;
+    try { o = await getOvation(); } catch { box.innerHTML = '<div class="empty">Could not load the NOAA model (offline?). <button class="btn" id="ovmap-btn">Retry</button></div>'; $('#ovmap-btn').addEventListener('click', drawOvationMap); return; }
+    box.innerHTML = '';
+    box.classList.add('ovmap');
+    const map = L.map(box, { scrollWheelZoom: false, zoomControl: true, attributionControl: true });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 8, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · NOAA SWPC OVATION',
+    }).addTo(map);
+    const renderer = L.canvas({ padding: 0.3 });
+    for (const [glon, glat, p] of o.coordinates) {
+      if (p < 5 || glat < 52 || glat > 84) continue;
+      const lon = glon > 180 ? glon - 360 : glon;
+      if (lon < -30 || lon > 50) continue;
+      L.rectangle([[glat - 0.5, lon - 0.5], [glat + 0.5, lon + 0.5]], {
+        renderer, stroke: false, fillColor: ovColor(p), fillOpacity: Math.min(0.75, 0.25 + p / 120), interactive: false,
+      }).addTo(map);
+    }
+    L.polyline(D.route_hourly.map((r) => [r[1], r[2]]), { color: '#9085e9', weight: 1.5, opacity: 0.7, dashArray: '4 4' }).addTo(map);
+    const s = shipNow();
+    if (s.sailing) L.circleMarker([s.lat, s.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#3ee08f', fillOpacity: 1 }).addTo(map).bindTooltip('Ship now', { permanent: true, direction: 'right' });
+    else for (const [name, lat, lon, dir] of [['Tromsø', 69.65, 18.96, 'left'], ['Alta', 69.98, 23.25, 'right']]) L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#fff', fillOpacity: 1 }).addTo(map).bindTooltip(name, { permanent: true, direction: dir });
+    map.fitBounds([[61, 4], [75, 30]]);
+    const ft = o['Forecast Time'] || o['Observation Time'];
+    $('#ovmap-meta').textContent = ft ? `Model valid for ${hm(ft)} ship time (${ago(o['Observation Time'] || ft)} data). Reload the page for a fresh run.` : '';
   }
 
   async function loadBz() {
@@ -801,6 +853,15 @@
     drawHourly(checkNight(), $('#check-chart'));
   }
 
+  // ------------------------------------------------------------ itinerary: mark today (ship/Budapest date)
+  function markItineraryToday() {
+    const today = shipDate(Date.now()).toISOString().slice(0, 10);
+    document.querySelectorAll('table.itin tr[data-d]').forEach((tr) => {
+      tr.classList.toggle('today', tr.dataset.d === today);
+      tr.classList.toggle('past', tr.dataset.d < today);
+    });
+  }
+
   // ------------------------------------------------------------ nav highlight
   function navSpy() {
     const links = [...document.querySelectorAll('#tabs a')];
@@ -832,7 +893,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, markItineraryToday, navSpy].forEach(safe);
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {

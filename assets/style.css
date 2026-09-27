@@ -213,6 +213,12 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .versum b { display: block; font-size: 20px; }
 .versum span { font-size: 11px; color: var(--text-2); }
 tr.pick { cursor: pointer; }
+table.itin td, table.itin th { white-space: normal; }
+table.itin td:nth-child(2), table.itin th:nth-child(2) { text-align: left; }
+table.itin tr.sea td { color: var(--muted); }
+table.itin tr.past td { opacity: 0.55; }
+table.itin tr.today td { background: rgba(62, 224, 143, 0.10); color: var(--text); }
+table.itin tr.today td:first-child::after { content: " · today"; color: var(--aurora); font-size: 11px; }
 tr.pick.sel td { background: rgba(62, 224, 143, 0.08); }
 .ev { display: flex; align-items: center; font-size: 12px; color: var(--text-2); padding: 4px 8px; border-top: 1px dashed var(--axis); margin: 2px 0; }
 table.hours td:nth-child(2), table.hours th:nth-child(2) { text-align: left; }
@@ -257,7 +263,9 @@ th { color: var(--muted); font-weight: 600; }
 .tile .s { font-size: 12px; color: var(--text-2); margin-top: 2px; }
 .btn { background: var(--surface-2); color: var(--text); border: 1px solid rgba(255,255,255,.18); border-radius: 10px; padding: 8px 14px; cursor: pointer; }
 .btn:hover { border-color: var(--aurora); }
-.ovation img { width: 100%; max-width: 520px; border-radius: 12px; display: block; margin: 0 auto; }
+#ovmap { min-height: 80px; display: flex; align-items: center; justify-content: center; border-radius: 12px; border: 1px solid var(--border); background: #0e1116; }
+#ovmap.ovmap { display: block; height: 380px; }
+@media (max-width: 560px) { #ovmap.ovmap { height: 340px; } }
 
 /* ---------- map ---------- */
 #map { height: 420px; border-radius: var(--radius); border: 1px solid var(--border); background: #111; }
@@ -278,3 +286,6 @@ th { color: var(--muted); font-weight: 600; }
 .text-block b { color: var(--text); }
 footer { color: var(--muted); font-size: 12px; margin-top: 40px; border-top: 1px solid var(--border); padding-top: 14px; }
 .sky svg { flex: none; }
+table.itin td.d { white-space: nowrap; }
+table.itin .why { font-size: 11px; }
+#ovmap .leaflet-control-attribution { font-size: 9px; line-height: 1.3; }
