@@ -330,6 +330,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             "cloud_p90": round(percentile(vals, 0.9), 1) if vals else None,
             "cloud_met": (round(met[idx][iso(h)], 1) if met and idx < len(met)
                           and met[idx].get(iso(h)) is not None else None),
+            "_p_ens_h": sum(v <= CLEAR_MAX for v in vals) / len(vals) if vals else None,
             "_members": members,
         })
 
@@ -353,6 +354,12 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     models = sorted({"ECMWF" if "ecmwf" in k else "GFS" for k in member_keys})
     w = ens_weight(lead) if p_ens is not None else 0.0
     p_clear = w * (p_ens or 0) + (1 - w) * p_clim
+
+    # Hourly clear-sky chance (cloud <= 40%): same ensemble/climate blend as the nightly value.
+    p_clim_h = c.get("p_clear_hour") if c.get("p_clear_hour") is not None else 0.15
+    for r in rows:
+        pe = r.pop("_p_ens_h")
+        r["p_clear_h"] = round(w * pe + (1 - w) * p_clim_h, 3) if pe is not None and w > 0 else round(p_clim_h, 3)
 
     # High-resolution MET Norway run (only the last ~2.5 days): a single deterministic
     # forecast, so it gets a vote rather than the final word.
@@ -434,6 +441,40 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     }
 
 
+# ---------------------------------------------------------------- model check
+
+class FixedRoute:
+    """A 'route' that never moves: used to run tonight's forecast for a fixed town."""
+
+    def __init__(self, name, lat, lon, light):
+        self.stops = []
+        self.pos = {"lat": lat, "lon": lon, "state": "port", "place": name, "light": light}
+
+    def at(self, t):
+        return dict(self.pos)
+
+
+CHECK_SPOTS = [  # name, lat, lon, town-light factor, cruise night whose October climate is used
+    ("Tromsø", 69.65, 18.96, 0.85, "2026-10-15"),
+    ("Alta", 69.98, 23.25, 0.95, "2026-10-16"),
+]
+
+
+def model_check(now, kp3_map, kp27_map, daily, cmes, clim):
+    """Tonight's forecast for Tromsø and Alta with exactly the cruise model, to compare with other apps."""
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+    d = (local - timedelta(days=1) if local.hour < 6 else local).date()
+    nights = []
+    for name, lat, lon, light, clim_night in CHECK_SPOTS:
+        n = score_night(d, FixedRoute(name, lat, lon, light), now, kp3_map, kp27_map, daily, cmes,
+                        {d.isoformat(): clim.get(clim_night, {})})
+        n["spot"] = name
+        nights.append(n)
+    return {"date": d.isoformat(), "nights": nights,
+            "note": "Tonight at a fixed spot, same model and code as the cruise nights. "
+                    "Background climate: October at the same place."}
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -489,6 +530,7 @@ def main():
             "cmes": cmes,
         },
         "nights": nights,
+        "model_check": model_check(now, kp3_map, kp27_map, daily, cmes, clim),
         "route_hourly": route_hourly,
         "sources": status,
     }

@@ -55,6 +55,7 @@ def main():
     for i, (d, lat, lon, place) in enumerate(points):
         n_nights = n_clear = 0
         cloud_sum = cloud_n = 0
+        clear_hours = 0
         for y in YEARS:
             for off in range(-WINDOW_DAYS, WINDOW_DAYS + 1):
                 hd = date(y, d.month, d.day) + timedelta(days=off)
@@ -67,6 +68,7 @@ def main():
                     if v is not None:
                         cloud_sum += v
                         cloud_n += 1
+                        clear_hours += v <= CLEAR_MAX
                 if not vals:
                     continue
                 n_nights += 1
@@ -75,6 +77,7 @@ def main():
             "lat": lat, "lon": lon, "place": place,
             "p_clear": round(n_clear / n_nights, 3) if n_nights else None,
             "mean_cloud": round(cloud_sum / cloud_n, 1) if cloud_n else None,
+            "p_clear_hour": round(clear_hours / cloud_n, 3) if cloud_n else None,
             "n_nights": n_nights,
         }
         print(d, place, out[d.isoformat()])

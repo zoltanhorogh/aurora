@@ -239,15 +239,20 @@
   const hlBand = (hl, bands, i, top, h) => { hl.innerHTML = i < 0 ? '' : `<rect x="${bands[i][0]}" y="${top}" width="${bands[i][1] - bands[i][0]}" height="${h}" fill="rgba(255,255,255,0.07)"/>`; };
 
   // ------------------------------------------------------------ night detail (hourly chart + GO/TRY/NO table)
-  // Same conservative spirit as the alerts. Uses MET Norway clouds when available, else the model average.
-  function hourStatus(h) {
-    if (!h.dark) return ['', 'day', h.sun > -6 ? 'Daylight / dusk' : 'Twilight'];
-    const cloud = h.cloud_met ?? h.cloud_mean;
-    if (h.p_act < 0.25) return ['NO', 'no', 'activity too weak'];
-    if (cloud == null) return ['?', 'unk', 'no cloud forecast yet'];
-    if (h.p_act >= 0.5 && cloud <= 30) return ['GO', 'go', ''];
-    if (cloud <= 70) return ['TRY', 'try', cloud > 30 ? 'some cloud' : 'activity uncertain'];
-    return ['NO', 'no', 'cloudy'];
+  // Same conservative spirit as the alerts. Hourly verdicts only within VERDICT_LEAD days: further out,
+  // hour-level cloud forecasts carry no real skill. Uses MET Norway cloud when available (lower = better),
+  // otherwise the hourly clear-sky chance (models + October climate).
+  const VERDICT_LEAD = 3;
+  function hourStatus(h, n) {
+    if (!h.dark) return ['twilight', 'day', ''];
+    if (n.lead_days > VERDICT_LEAD) return ['–', 'far', ''];
+    if (h.p_act < 0.25) return ['NO', 'no', 'aurora too weak'];
+    const met = h.cloud_met;
+    const goSky = met != null ? met <= 30 : h.p_clear_h >= 0.6;
+    const trySky = met != null ? met <= 70 : h.p_clear_h >= 0.3;
+    if (h.p_act >= 0.5 && goSky) return ['GO', 'go', ''];
+    if (trySky) return ['TRY', 'try', ''];
+    return ['NO', 'no', 'too cloudy'];
   }
 
   // ︎ forces text (not emoji) presentation on iOS
@@ -262,7 +267,7 @@
   }
 
   function bestWindow(n) {
-    const st = n.hourly.map((h) => hourStatus(h)[0]);
+    const st = n.hourly.map((h) => hourStatus(h, n)[0]);
     for (const want of ['GO', 'TRY']) {
       let best = null, i = 0;
       while (i < st.length) {
@@ -282,45 +287,51 @@
 
   function hoursTable(n) {
     const hasMet = n.hourly.some((h) => h.cloud_met != null);
+    const far = n.lead_days > VERDICT_LEAD;
     const rows = n.hourly.filter((h) => h.sun < -3);
-    const events = [...(n.events || [])];
-    const win = bestWindow(n);
-    const unknown = n.hourly.some((h) => h.dark && hourStatus(h)[0] === '?');
-    let html = '';
+    const events = (n.events || []).filter((e) => e.kind === 'depart' || e.kind === 'arrive');
+    const win = far ? null : bestWindow(n);
+    let html = `<div class="hr head"><span>Time</span><span>Verdict</span><span>Clear sky chance</span><span class="kp">Kp fc ≥ need</span></div>`;
     const evRow = (e) => `<div class="ev">${evIcon(e.kind)}${esc(e.label)} ${e.local}</div>`;
     rows.forEach((h) => {
       while (events.length && events[0].t <= h.t) html += evRow(events.shift());
-      const [lab, cls, why] = hourStatus(h);
-      const cloud = h.cloud_met ?? h.cloud_mean;
-      const pill = lab ? `<span class="st ${cls}">${lab}</span>` : `<span class="st day">${new Date(h.t).getUTCHours() >= 12 ? 'dusk' : 'dawn'}</span>`;
+      const [lab, cls, why] = hourStatus(h, n);
+      const clear = Math.round((h.p_clear_h ?? 0) * 100);
       const right = lab === 'NO' ? `<span class="why">${why}</span>`
         : h.kp >= h.kp_req ? `${h.kp.toFixed(1)} ≥ ${h.kp_req.toFixed(1)} <span class="ok">✓</span>`
         : `<span class="why">${h.kp.toFixed(1)} &lt; ${h.kp_req.toFixed(1)}</span>`;
       html += `<div class="hr ${cls}">
-        <span class="tm">${h.local}</span>${pill}
-        <span class="cb"><span class="bar2">${h.cloud_mean != null ? `<i style="width:${h.cloud_mean}%"></i>` : ''}${h.cloud_met != null ? `<s style="left:calc(${h.cloud_met}% - 1.5px)"></s>` : ''}</span><span class="cv">${cloud != null ? Math.round(cloud) + '%' : '–'}</span></span>
+        <span class="tm">${h.local}</span><span class="st ${cls}">${lab}</span>
+        <span class="cb"><span class="bar2"><i style="width:${clear}%"></i></span><span class="cv">${clear}%</span>${h.cloud_met != null ? `<span class="met">MET ${Math.round(h.cloud_met)}%</span>` : ''}</span>
         <span class="kp">${right}</span></div>`;
     });
     html += events.map(evRow).join('');
     return `
       <h3 style="margin-top:16px">Hour by hour</h3>
       ${sunStrip(n)}
-      ${win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>`
-        : `<div class="win none">${unknown ? 'No cloud forecast for this night yet, so no hourly verdict.' : 'No good window tonight.'}</div>`}
+      ${far ? '<div class="win none">Too early for hourly verdicts. They start about 3 days before the night; until then use the night\'s overall chance above.</div>'
+        : win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>`
+        : '<div class="win none">No good window tonight.</div>'}
       <div class="hours2">${html}</div>
-      <div class="legend" style="margin-top:8px"><span><i style="background:#3987e5"></i>Cloud, models (ECMWF/GFS)</span><span><i style="background:#fff;width:3px"></i>Cloud, MET Norway</span><span>Kp: forecast ≥ needed ✓</span></div>
-      <div class="hint"><span class="st go">GO</span> dark, activity chance ≥50% and cloud ≤30% · <span class="st try">TRY</span> activity chance ≥25% and cloud ≤70% · <span class="st no">NO</span> otherwise.
-        Cloud % shown is MET Norway when available, otherwise the model average.
+      <div class="legend" style="margin-top:8px"><span><i style="background:#199e70"></i>Clear sky chance (models + October climate; longer = better)</span><span><span class="met">MET 20%</span> MET Norway cloud cover (lower = better)</span><span>Kp: forecast ≥ needed ✓</span></div>
+      <div class="hint"><span class="st go">GO</span> dark, activity chance ≥50% and MET cloud ≤30% (without MET: clear sky chance ≥60%) ·
+        <span class="st try">TRY</span> activity chance ≥25% and MET cloud ≤70% (without MET: clear sky chance ≥30%) · <span class="st no">NO</span> otherwise.
         ${hasMet ? '' : 'MET Norway (2.5 km) reaches a night about 2.5 days before it.'} Exact numbers: "Show all data" below.</div>`;
   }
 
   function renderDetail() {
     const n = D.nights.find((x) => x.date === selected);
     if (!n) return;
+    $('#night-detail').innerHTML = detailHTML(n, 'hourly-chart');
+    drawHourly(n, $('#hourly-chart'));
+  }
+
+  // Full night view; also reused 1:1 by the model check panel.
+  function detailHTML(n, chartId) {
     const hours = n.hourly;
     const hasCloud = hours.some((h) => h.cloud_mean != null);
     const hasMet = hours.some((h) => h.cloud_met != null);
-    $('#night-detail').innerHTML = `
+    return `
       <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">${dayLabel(n.date)} · ${esc(shortPlace(n.place))}</h3>${chip(n.rating)}
         <span style="font-size:20px;font-weight:700">${pct(n.score)}</span>${confSig(n.confidence, true)}
@@ -334,7 +345,7 @@
             <span><i class="line" style="background:#d95926"></i>Chance activity is strong enough here</span>
             <span><i class="band"></i>Dark hours</span>
           </div>
-          <div class="chart" id="hourly-chart"></div>
+          <div class="chart" id="${chartId}"></div>
           ${hasCloud ? '' : '<div class="hint">No weather model reaches this night yet, so there are no cloud bars. The clear-sky factor uses the October climate instead.</div>'}
           <div class="hint">Times are ship time (UTC+2). <b>Kp forecast</b> = expected geomagnetic activity (0–9). <b>Kp needed</b> = the level at which aurora is clearly visible where the ship is at that hour (higher the further south). <b>Activity chance</b> = probability that the real Kp reaches the needed level, allowing for forecast error. At midnight: ${kpNeedText(n.kp_req)}.</div>
         </div>
@@ -342,15 +353,13 @@
       ${hoursTable(n)}
       ${formula(n)}
       <details class="table"><summary>Show all data (table)</summary><div class="tbl-wrap"><table>
-        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Cloud models</th><th>Cloud MET</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
-        ${hours.map((h) => `<tr><td>${h.local}</td><td>${esc(shortPlace(h.place)).slice(0, 26)}</td><td>${h.sun}°</td><td>${h.cloud_mean ?? '–'}${h.cloud_mean != null ? '%' : ''}</td><td>${h.cloud_met ?? '–'}${h.cloud_met != null ? '%' : ''}</td><td>${h.kp.toFixed(1)}</td><td>${h.kp_req.toFixed(1)}</td><td>${pct(h.p_act)}</td><td>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '%' : 'down'}</td></tr>`).join('')}
+        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Clear chance</th><th>Cloud models</th><th>Cloud MET</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
+        ${hours.map((h) => `<tr><td>${h.local}</td><td>${esc(shortPlace(h.place)).slice(0, 26)}</td><td>${h.sun}°</td><td>${pct(h.p_clear_h)}</td><td>${h.cloud_mean ?? '–'}${h.cloud_mean != null ? '%' : ''}</td><td>${h.cloud_met ?? '–'}${h.cloud_met != null ? '%' : ''}</td><td>${h.kp.toFixed(1)}</td><td>${h.kp_req.toFixed(1)}</td><td>${pct(h.p_act)}</td><td>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '%' : 'down'}</td></tr>`).join('')}
       </table></div></details>`;
-    drawHourly(n);
   }
 
-  function drawHourly(n) {
-    const cont = $('#hourly-chart');
-    if (!cont) return;
+  function drawHourly(n, cont) {
+    if (!cont || !n) return;
     const hours = n.hourly;
     const W = widthOf(cont), H = 250, ml = 38, mr = 8, mt = 10, mb = 46;
     const pw = W - ml - mr, ph = H - mt - mb;
@@ -388,7 +397,8 @@
         <div class="row"><span>Sun</span><span>${h.sun}° ${h.dark ? '(dark)' : '(twilight/day)'}</span></div>
         <div class="row"><span>Cloud (models)</span><span>${h.cloud_mean != null ? `${h.cloud_mean}% (${h.cloud_p10}–${h.cloud_p90})` : 'no forecast yet'}</span></div>
         ${h.cloud_met != null ? `<div class="row"><span>Cloud (MET Norway)</span><span>${h.cloud_met}%</span></div>` : ''}
-        <div class="row"><span>Status</span><span>${hourStatus(h)[0] || '–'} ${hourStatus(h)[2]}</span></div>
+        <div class="row"><span>Clear sky chance</span><span>${pct(h.p_clear_h)}</span></div>
+        <div class="row"><span>Verdict</span><span>${hourStatus(h, n)[0]} ${hourStatus(h, n)[2]}</span></div>
         <div class="row"><span>Kp forecast</span><span>${h.kp.toFixed(1)}</span></div>
         <div class="row"><span>Kp needed here</span><span>${h.kp_req.toFixed(1)}</span></div>
         <div class="row"><span>Activity chance</span><span>${pct(h.p_act)}</span></div>
@@ -697,6 +707,32 @@
     map.fitBounds(pl.getBounds(), { padding: [20, 20] });
   }
 
+  // ------------------------------------------------------------ model check (tonight in Tromsø and Alta)
+  let checkSpot = 0;
+  const checkNight = () => (D.model_check ? D.model_check.nights[checkSpot] : null);
+
+  function renderCheck() {
+    const mc = D.model_check;
+    const body = $('#check-body');
+    if (!mc || !mc.nights.length) { body.innerHTML = '<div class="empty">Model check data will appear after the next update.</div>'; return; }
+    const nowRow = (n) => n.hourly.reduce((b, h) => (Math.abs(new Date(h.t) - Date.now()) < Math.abs(new Date(b.t) - Date.now()) ? h : b));
+    body.innerHTML = `
+      <p class="hint" style="margin-top:0">${esc(mc.note)} Compare with Norway Lights or yr.no, or just look outside.</p>
+      <div class="tbl-wrap"><table>
+        <tr><th>Tonight (${dayLabel(mc.date)})</th><th>Chance</th><th>Best window</th><th>MET cloud now*</th></tr>
+        ${mc.nights.map((n, i) => {
+          const w = n.lead_days > VERDICT_LEAD ? null : bestWindow(n);
+          const r = nowRow(n);
+          return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : 'none'}</td><td>${r.cloud_met != null ? Math.round(r.cloud_met) + '%' : '–'}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <p class="hint">Tap a row to switch. *At the last update (${ago(D.generated)}); live Kp is in the Live section. Sources last run: ${Object.entries(D.sources).map(([k, v]) => `${esc(k)} ${v.ok ? '✓' : '✕'}`).join(' · ')}</p>
+      <div id="check-detail" style="border-top:1px solid var(--border);padding-top:12px"></div>`;
+    body.querySelectorAll('tr.pick').forEach((tr) => tr.addEventListener('click', () => { checkSpot = +tr.dataset.i; renderCheck(); }));
+    $('#check-detail').innerHTML = detailHTML(checkNight(), 'check-chart');
+    drawHourly(checkNight(), $('#check-chart'));
+  }
+
   // ------------------------------------------------------------ nav highlight
   function navSpy() {
     const links = [...document.querySelectorAll('#tabs a')];
@@ -724,6 +760,8 @@
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
     [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, navSpy].forEach(safe);
+    // The check panel is collapsed: build it on first open so its chart can measure its width.
+    $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {
       // instant jump (the CSS smooth scrolling would animate and can be interrupted); repeat once late content has loaded
       const jump = () => window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - 70, behavior: 'instant' });
@@ -738,7 +776,8 @@
         if (Math.abs(window.innerWidth - lastW) < 30) return;
         lastW = window.innerWidth;
         const n = D.nights.find((x) => x.date === selected);
-        [() => drawHourly(n), () => HIST && drawTrend(HIST.runs), drawKp27, drawKp3, drawBz].forEach(safe);
+        [() => drawHourly(n, $('#hourly-chart')), () => drawHourly(checkNight(), $('#check-chart')),
+          () => HIST && drawTrend(HIST.runs), drawKp27, drawKp3, drawBz].forEach(safe);
       }, 200);
     });
   }
