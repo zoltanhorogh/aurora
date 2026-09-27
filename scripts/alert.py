@@ -18,7 +18,7 @@ import os
 import urllib.request
 from datetime import datetime, timedelta
 
-from common import (CONFIG, DATA, UA, Route, http_get_json, iso, kp_required, load_json,
+from common import (CONFIG, DATA, UA, Route, fetch_hp30, http_get_json, iso, kp_required, load_json,
                     mag_lat, parse_utc, save_json, sun_alt, utcnow)
 
 DASHBOARD = "https://zoltanhorogh.github.io/aurora/"
@@ -41,6 +41,14 @@ def live_readings(lat, lon):
         out["kp"] = float(kp[-1]["estimated_kp"])
     except Exception as e:
         out["kp_error"] = str(e)
+    try:
+        # Half-hourly planetary activity: reacts to substorms faster than the 3-hourly Kp.
+        hp = fetch_hp30(utcnow() - timedelta(hours=24), utcnow())
+        out["hp30_series"] = [[iso(t), v] for t, v in hp]
+        if hp and utcnow() - hp[-1][0] <= timedelta(minutes=90):
+            out["hp30"] = hp[-1][1]
+    except Exception as e:
+        out["hp30_error"] = str(e)
     try:
         mag = http_get_json(f"{SWPC}/json/rtsw/rtsw_mag_1m.json")
         cutoff = utcnow() - timedelta(minutes=30)
@@ -121,6 +129,8 @@ def fmt_live(lv, req):
     parts = []
     if "kp" in lv:
         parts.append(f"Kp now {lv['kp']:.1f} (needed here ≈{req:.0f})")
+    if "hp30" in lv:
+        parts.append(f"Hp30 {lv['hp30']:.1f}")
     if "bz30" in lv:
         parts.append(f"Bz {lv['bz30']:+.1f} nT" + (" (south ✓)" if lv["bz30"] <= BZ_SOUTH else ""))
     if "speed" in lv:
@@ -187,13 +197,20 @@ def main():
         ov_l = lv.get("ovation_local", 0)
         ov_n = lv.get("ovation_north", 0)
         cloud = lv.get("cloud")
+        hp30 = lv.get("hp30", 0)
         activity_ok = (ov_l >= OVATION_LOCAL_MIN
                        or (ov_n >= OVATION_NORTH_MIN and kp >= req)
-                       or (kp >= req + 1 and bz <= BZ_SOUTH))
-        strong = ov_l >= 50 or kp >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
+                       or (kp >= req + 1 and bz <= BZ_SOUTH)
+                       or hp30 >= req + 1.5)
+        strong = ov_l >= 50 or kp >= req + 3 or hp30 >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
+        # Keep a fresh Hp30 series for the dashboard's live tile (committed by the workflow).
+        if lv.get("hp30_series") and not args.dry_run:
+            prev = load_json(DATA / "hp30.json", {}) or {}
+            if not prev.get("series") or prev["series"][-1] != lv["hp30_series"][-1]:
+                save_json(DATA / "hp30.json", {"updated": iso(now), "series": lv["hp30_series"]}, compact=True)
         sky_ok = cloud is not None and cloud <= CLOUD_MAX
         print(f"{iso(now)} {pos['place']} sun {sa:.1f} req {req:.1f} activity_ok={activity_ok} "
-              f"strong={strong} sky_ok={sky_ok} live={lv}")
+              f"strong={strong} sky_ok={sky_ok} live={ {k: v for k, v in lv.items() if k != 'hp30_series'} }")
         if activity_ok and sky_ok:
             level = "strong" if strong else "watch"
             last = parse_utc(state["last_alert"]) if state.get("last_alert") else None

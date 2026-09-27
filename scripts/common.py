@@ -94,6 +94,13 @@ def kp_required(mlat):
     return max(0.0, min(9.0, (67.5 - mlat) / 1.8 + 0.5))
 
 
+def fetch_hp30(start, end):
+    """GFZ Potsdam Hp30: half-hourly planetary activity (Kp-like scale), published ~30 min after each interval."""
+    js = http_get_json("https://kp.gfz-potsdam.de/app/json/"
+                       f"?start={iso(start)}&end={iso(end)}&index=Hp30")
+    return [(parse_utc(t), float(v)) for t, v in zip(js.get("datetime", []), js.get("Hp30", [])) if v is not None]
+
+
 def norm_cdf(x):
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 

@@ -4,7 +4,7 @@ import re
 import traceback
 from datetime import datetime, timedelta
 
-from common import (CONFIG, DATA, UTC, Route, http_get, http_get_json, iso, kp_required,
+from common import (CONFIG, DATA, UTC, Route, fetch_hp30, http_get, http_get_json, iso, kp_required,
                     load_json, mag_lat, moon_alt, moon_illum, night_dates, night_hours,
                     norm_cdf, parse_utc, save_json, sun_alt, utcnow)
 from build_climatology import CLEAR_MAX, DARK_SUN, clear_window
@@ -13,7 +13,7 @@ SWPC = "https://services.swpc.noaa.gov"
 SHIP_UTC_OFFSET = 2          # CEST; Norway stays on summer time until 25 Oct
 KP_CLIMATOLOGY = 2.3         # typical Kp in a declining solar-cycle October
 P_ACT_CAP = 0.9              # even inside the oval, a display is never certain
-MOON_PENALTY = 0.35          # full moon high in the sky washes out faint aurora
+MOON_PENALTY = 0.25          # full moon high in the sky washes out faint aurora (not strong displays)
 RATINGS = [(0.40, "GOOD"), (0.25, "FAIR"), (0.10, "LOW"), (0.0, "POOR")]
 MAX_HISTORY_RUNS = 400
 MET_MAX_LEAD = 2.6           # days; MET Norway's hourly high-resolution part reaches ~60 h
@@ -112,6 +112,11 @@ def fetch_daily_indices():
     return out
 
 
+@source("gfz_hp30")
+def fetch_hp30_24h(now):
+    return [[iso(t), v] for t, v in fetch_hp30(now - timedelta(hours=24), now)]
+
+
 @source("nasa_donki_cme")
 def fetch_cmes(now):
     start = (now - timedelta(days=7)).date().isoformat()
@@ -172,17 +177,6 @@ def fetch_met(lat, lon):
             break  # beyond this point the series is 6-hourly global-model data
         out[iso(ta)] = a["data"]["instant"]["details"].get("cloud_area_fraction")
     return out
-
-
-def met_weight(lead_days):
-    """Weight of the high-resolution MET Norway model in the clear-sky chance."""
-    if lead_days <= 0.5:
-        return 0.7  # the night itself: the local 2.5 km model is the best source we have
-    if lead_days <= 1:
-        return 0.5
-    if lead_days <= 2:
-        return 0.3
-    return 0.15
 
 
 def ens_weight(lead_days):
@@ -363,9 +357,10 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
         pe = r.pop("_p_ens_h")
         r["p_clear_h"] = round(w * pe + (1 - w) * p_clim_h, 3) if pe is not None and w > 0 else round(p_clim_h, 3)
 
-    # High-resolution MET Norway run (only the last ~2.5 days): a single deterministic
-    # forecast, so it gets a vote rather than the final word.
-    p_met = w_met = met_note = None
+    # Once MET Norway's 2.5 km model covers the night (last ~2.5 days), clouds come from MET only;
+    # before that, from the global ensembles + October climate.
+    p_met = met_note = None
+    cloud_source = "models"
     met_vals = [r["cloud_met"] for r in dark]
     if dark and sum(v is not None for v in met_vals) >= 0.8 * len(dark):
         start = next((dark[i]["local"] for i in range(len(dark) - 1)
@@ -376,23 +371,19 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             p_met, met_note = 0.35, "only partly clear"
         else:
             p_met, met_note = 0.05, "no clear gap"
-        w_met = met_weight(lead)
-        p_clear = w_met * p_met + (1 - w_met) * p_clear
-
-    # The same MET vote per hour, so the hourly bar (and the verdict built on it) agrees with the night.
-    for r in rows:
-        m = r["cloud_met"]
-        if m is not None:
-            p_met_h = 0.9 if m <= CLEAR_MAX else 0.35 if m <= 70 else 0.05
-            wm = met_weight(lead)
-            r["p_clear_h"] = round(wm * p_met_h + (1 - wm) * r["p_clear_h"], 3)
+        p_clear = p_met
+        cloud_source = "MET Norway"
 
     best = max(dark, key=lambda r: r["p_act"]) if dark else None
     p_act = best["p_act"] if best else 0.0
     dark_f = min(1.0, len(dark) / 4)
     moon_pen = (sum(r["moon_illum"] for r in dark if r["moon_alt"] > 0) / len(dark)) if dark else 0
     light = (sum(r["light"] for r in dark) / len(dark)) if dark else 1.0
-    ml_f = (1 - MOON_PENALTY * moon_pen) * light
+    # The stronger the expected activity above what this spot needs, the less the moon matters
+    # (25 Sep 2026, Tromsø: bright display next to a full moon).
+    margin = (best["kp"] - best["kp_req"]) if best else 0.0
+    moon_scale = 1.0 if margin <= 0 else max(0.2, 1 - 0.4 * margin)
+    ml_f = (1 - MOON_PENALTY * moon_scale * moon_pen) * light
     score = p_act * p_clear * dark_f * ml_f
     dark_cloud = [r["cloud_mean"] for r in dark if r["cloud_mean"] is not None]
 
@@ -439,7 +430,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
                      "kp_src": best["kp_src"] if best else None, "best_local": best["local"] if best else None},
         "clear": {"p": round(p_clear, 3), "p_ens": round(p_ens, 3) if p_ens is not None else None,
                   "p_clim": round(p_clim, 3), "weight": round(w, 2), "members": n_ok, "models": models,
-                  "p_met": p_met, "w_met": w_met, "met_note": met_note,
+                  "p_met": p_met, "met_note": met_note, "source": cloud_source,
                   "mean_cloud_dark": round(sum(dark_cloud) / len(dark_cloud), 1) if dark_cloud else None,
                   "clim_mean_cloud": c.get("mean_cloud")},
         "factors": {"activity": round(p_act, 3), "clear": round(p_clear, 3),
@@ -485,6 +476,85 @@ def model_check(now, kp3_map, kp27_map, daily, cmes, clim):
                     "Background climate: October at the same place."}
 
 
+# ---------------------------------------------------------------- verification log
+# Keeps the evening forecast for each model-check night and, once the night is over, what actually
+# happened: MET Norway's analysed cloud cover (Open-Meteo historical forecast = the first hours of each
+# run) and GFZ Hp30. Hp30 is a planetary index, so it can underrate local substorms in the auroral zone.
+
+VERIFY_DAYS = 10
+
+
+def hour_verdict(h):
+    if not h["dark"]:
+        return "twilight"
+    if h["cloud_met"] is None:
+        return "–"
+    if h["p_act"] < 0.25:
+        return "NO"
+    if h["p_act"] >= 0.5 and h["cloud_met"] <= CLEAR_MAX:
+        return "GO"
+    return "TRY" if h["cloud_met"] <= 70 else "NO"
+
+
+@source("verification")
+def update_verification(now, mc):
+    ver = load_json(DATA / "verification.json", {"nights": {}}) or {"nights": {}}
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+
+    # 1) Evening forecast snapshot: the last run before 20:00 local on the night's own date.
+    if local.date().isoformat() == mc["date"] and local.hour < 20:
+        for n in mc["nights"]:
+            rec = ver["nights"].setdefault(f"{mc['date']}|{n['spot']}", {"date": mc["date"], "spot": n["spot"]})
+            rec["forecast"] = {
+                "issued": iso(now), "score": n["score"], "rating": n["rating"], "source": n["clear"]["source"],
+                "hours": [[h["local"], hour_verdict(h), h["cloud_met"]] for h in n["hourly"] if h["sun"] < -3],
+            }
+
+    # 2) Observed conditions for finished nights (backfilled for the last VERIFY_DAYS nights).
+    for back in range(1, VERIFY_DAYS + 1):
+        d = (local - timedelta(days=back)).date()
+        if now < datetime(d.year, d.month, d.day, 4, tzinfo=UTC) + timedelta(days=1, hours=2):
+            continue  # night not over yet
+        for name, lat, lon, _light, _clim in CHECK_SPOTS:
+            rec = ver["nights"].setdefault(f"{d.isoformat()}|{name}", {"date": d.isoformat(), "spot": name})
+            if rec.get("observed"):
+                continue
+            hours = night_hours(d)
+            nd = d + timedelta(days=1)
+            wx = http_get_json("https://historical-forecast-api.open-meteo.com/v1/forecast"
+                               f"?latitude={lat}&longitude={lon}&start_date={d.isoformat()}&end_date={nd.isoformat()}"
+                               "&hourly=cloud_cover&models=metno_seamless&timezone=GMT")
+            cloud = dict(zip(wx["hourly"]["time"], wx["hourly"]["cloud_cover"]))
+            hp = fetch_hp30(hours[0], hours[-1] + timedelta(hours=1))
+            req = kp_required(mag_lat(lat, lon))
+            rows = []
+            for h in hours:
+                sa = sun_alt(h, lat, lon)
+                if sa >= -3:
+                    continue
+                c = cloud.get(h.strftime("%Y-%m-%dT%H:00"))
+                hv = [v for t, v in hp if h <= t < h + timedelta(hours=1)]
+                rows.append([local_hm(h), round(sa, 1), None if c is None else round(c), max(hv) if hv else None])
+            dark = [r for r in rows if r[1] <= DARK_SUN]
+            twi = [r for r in rows if -DARK_SUN > -r[1] > 6]  # sun between -6° and -12°
+            hp_dark = [r[3] for r in dark if r[3] is not None]
+            if not rows or any(r[2] is None for r in rows):
+                continue  # analysis not complete yet, try again next run
+            rec["observed"] = {
+                "kp_needed": round(req, 1),
+                "hp30_max_dark": max(hp_dark) if hp_dark else None,
+                "clear_dark": [r[0] for r in dark if r[2] <= CLEAR_MAX],
+                "clear_twilight": [r[0] for r in twi if r[2] <= CLEAR_MAX],
+                "hours": rows,
+            }
+
+    # Keep the file small: only the last VERIFY_DAYS + a few nights.
+    cutoff = (local - timedelta(days=VERIFY_DAYS + 5)).date().isoformat()
+    ver["nights"] = {k: v for k, v in ver["nights"].items() if v["date"] >= cutoff}
+    ver["updated"] = iso(now)
+    save_json(DATA / "verification.json", ver, compact=True)
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -504,6 +574,9 @@ def main():
     kp27_map = {r["date"]: r["kp"] for r in kp27["days"]}
 
     nights = [score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
+    mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
+    update_verification(now, mc)
+    hp30 = fetch_hp30_24h(now) or []
 
     # Hourly route for the live view.
     t = route.start - timedelta(hours=1)
@@ -538,9 +611,10 @@ def main():
             "observed_daily": [{"date": k, "kp_max": v["max"]} for k, v in sorted(daily.items())],
             "recurrence": recurrence,
             "cmes": cmes,
+            "hp30": hp30,
         },
         "nights": nights,
-        "model_check": model_check(now, kp3_map, kp27_map, daily, cmes, clim),
+        "model_check": mc,
         "route_hourly": route_hourly,
         "sources": status,
     }

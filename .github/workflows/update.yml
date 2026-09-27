@@ -32,7 +32,7 @@ jobs:
         run: |
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/latest.json data/history.json
+          git add data/latest.json data/history.json data/verification.json
           git add data/notify_state.json 2>/dev/null || true
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "Forecast update $(date -u +'%Y-%m-%d %H:%M') UTC"
