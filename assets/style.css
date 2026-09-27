@@ -184,6 +184,7 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .hr.head, .hr.head .kp { font-size: 10px; color: var(--muted); padding-top: 0; padding-bottom: 2px; text-transform: uppercase; letter-spacing: .05em; }
 .bar2 i { background: #199e70 !important; }
 .met { font-size: 10px; color: var(--text-2); border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+.cb .met { flex: none; width: 60px; text-align: center; }
 .hr .cb { min-width: 0; }
 tr.pick { cursor: pointer; }
 tr.pick.sel td { background: rgba(62, 224, 143, 0.08); }

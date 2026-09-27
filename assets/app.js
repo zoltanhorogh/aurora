@@ -240,18 +240,15 @@
 
   // ------------------------------------------------------------ night detail (hourly chart + GO/TRY/NO table)
   // Same conservative spirit as the alerts. Hourly verdicts only within VERDICT_LEAD days: further out,
-  // hour-level cloud forecasts carry no real skill. Uses MET Norway cloud when available (lower = better),
-  // otherwise the hourly clear-sky chance (models + October climate).
+  // hour-level cloud forecasts carry no real skill. The verdict follows the one clear-sky number shown
+  // (models + October climate + MET Norway vote), so bar and verdict always agree.
   const VERDICT_LEAD = 3;
   function hourStatus(h, n) {
     if (!h.dark) return ['twilight', 'day', ''];
     if (n.lead_days > VERDICT_LEAD) return ['–', 'far', ''];
     if (h.p_act < 0.25) return ['NO', 'no', 'aurora too weak'];
-    const met = h.cloud_met;
-    const goSky = met != null ? met <= 30 : h.p_clear_h >= 0.6;
-    const trySky = met != null ? met <= 70 : h.p_clear_h >= 0.3;
-    if (h.p_act >= 0.5 && goSky) return ['GO', 'go', ''];
-    if (trySky) return ['TRY', 'try', ''];
+    if (h.p_act >= 0.5 && h.p_clear_h >= 0.6) return ['GO', 'go', ''];
+    if (h.p_clear_h >= 0.3) return ['TRY', 'try', ''];
     return ['NO', 'no', 'too cloudy'];
   }
 
@@ -313,9 +310,10 @@
         : win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>`
         : '<div class="win none">No good window tonight.</div>'}
       <div class="hours2">${html}</div>
-      <div class="legend" style="margin-top:8px"><span><i style="background:#199e70"></i>Clear sky chance (models + October climate; longer = better)</span><span><span class="met">MET 20%</span> MET Norway cloud cover (lower = better)</span><span>Kp: forecast ≥ needed ✓</span></div>
-      <div class="hint"><span class="st go">GO</span> dark, activity chance ≥50% and MET cloud ≤30% (without MET: clear sky chance ≥60%) ·
-        <span class="st try">TRY</span> activity chance ≥25% and MET cloud ≤70% (without MET: clear sky chance ≥30%) · <span class="st no">NO</span> otherwise.
+      <div class="legend" style="margin-top:8px"><span><i style="background:#199e70"></i>Clear sky chance: probability of ≤40% cloud that hour (global models + October climate${hasMet ? ' + MET Norway vote' : ''}; longer = better)</span><span><span class="met">MET 20%</span> MET Norway's own cloud cover (lower = better)</span><span>Kp: forecast ≥ needed ✓</span></div>
+      <div class="hint"><span class="st go">GO</span> dark, activity chance ≥50% and clear sky chance ≥60% ·
+        <span class="st try">TRY</span> activity chance ≥25% and clear sky chance ≥30% · <span class="st no">NO</span> otherwise.
+        1% means the sky is almost certainly covered. When MET Norway disagrees with the global models it gets a vote (70% on the night itself, 50% a day ahead, 30% two days ahead).
         ${hasMet ? '' : 'MET Norway (2.5 km) reaches a night about 2.5 days before it.'} Exact numbers: "Show all data" below.</div>`;
   }
 

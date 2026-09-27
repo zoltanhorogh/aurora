@@ -176,6 +176,8 @@ def fetch_met(lat, lon):
 
 def met_weight(lead_days):
     """Weight of the high-resolution MET Norway model in the clear-sky chance."""
+    if lead_days <= 0.5:
+        return 0.7  # the night itself: the local 2.5 km model is the best source we have
     if lead_days <= 1:
         return 0.5
     if lead_days <= 2:
@@ -376,6 +378,14 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             p_met, met_note = 0.05, "no clear gap"
         w_met = met_weight(lead)
         p_clear = w_met * p_met + (1 - w_met) * p_clear
+
+    # The same MET vote per hour, so the hourly bar (and the verdict built on it) agrees with the night.
+    for r in rows:
+        m = r["cloud_met"]
+        if m is not None:
+            p_met_h = 0.9 if m <= CLEAR_MAX else 0.35 if m <= 70 else 0.05
+            wm = met_weight(lead)
+            r["p_clear_h"] = round(wm * p_met_h + (1 - wm) * r["p_clear_h"], 3)
 
     best = max(dark, key=lambda r: r["p_act"]) if dark else None
     p_act = best["p_act"] if best else 0.0
