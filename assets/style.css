@@ -208,6 +208,10 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .fb .s { font-size: 11px; color: var(--text-2); }
 .mettag { font-size: 9px; letter-spacing: .08em; color: #9ec5f4; border: 1px solid #3987e5; border-radius: 4px; padding: 0 4px; }
 .hr .cb { min-width: 0; }
+.versum { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 10px; }
+.versum > div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.versum b { display: block; font-size: 20px; }
+.versum span { font-size: 11px; color: var(--text-2); }
 tr.pick { cursor: pointer; }
 tr.pick.sel td { background: rgba(62, 224, 143, 0.08); }
 .ev { display: flex; align-items: center; font-size: 12px; color: var(--text-2); padding: 4px 8px; border-top: 1px dashed var(--axis); margin: 2px 0; }

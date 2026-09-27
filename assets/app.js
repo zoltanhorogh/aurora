@@ -742,21 +742,31 @@
     const recs = VER && VER.nights ? Object.values(VER.nights).filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.spot.localeCompare(b.spot))) : [];
     if (!recs.length) return '';
     const hoursTxt = (arr) => (arr && arr.length ? `${arr[0]}–${arr[arr.length - 1]} (${arr.length} h)` : 'none');
-    const row = (r) => {
+    // Did the evening forecast get the clouds right? Returns null when no forecast was recorded.
+    const judge = (r) => {
       const o = r.observed, f = r.forecast;
-      let fc = '<span class="why">not recorded</span>', res = '';
-      if (f) {
-        const good = f.hours.filter((h) => h[1] === 'GO' || h[1] === 'TRY').map((h) => h[0]);
-        const clear = new Set([...(o.clear_dark || []), ...(o.clear_twilight || [])]);
-        fc = `${pct(f.score)} ${f.rating}${good.length ? ` · ${good[0]}–${good[good.length - 1]}` : ' · no window'}`;
-        const hit = good.some((h) => clear.has(h));
-        res = good.length ? (hit ? '<span class="ok">✓ clear as forecast</span>' : '<span class="why">✕ stayed cloudy</span>')
-          : (clear.size ? '<span class="why">✕ missed clear hours</span>' : '<span class="ok">✓ cloudy as forecast</span>');
-      }
+      if (!f) return null;
+      const good = f.hours.filter((h) => h[1] === 'GO' || h[1] === 'TRY').map((h) => h[0]);
+      const clear = new Set([...(o.clear_dark || []), ...(o.clear_twilight || [])]);
+      const ok = good.length ? good.some((h) => clear.has(h)) : !clear.size;
+      const text = good.length ? (ok ? 'clear as forecast' : 'stayed cloudy') : (ok ? 'cloudy as forecast' : 'missed clear hours');
+      return { ok, text, good };
+    };
+    const row = (r) => {
+      const o = r.observed, f = r.forecast, j = judge(r);
+      const fc = f ? `${pct(f.score)} ${f.rating}${j.good.length ? ` · ${j.good[0]}–${j.good[j.good.length - 1]}` : ' · no window'}` : '<span class="why">not recorded</span>';
+      const res = j ? (j.ok ? `<span class="ok">✓ ${j.text}</span>` : `<span class="why">✕ ${j.text}</span>`) : '';
       return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td>${fc}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td><td>${res}</td></tr>`;
     };
+    const judged = recs.map(judge).filter(Boolean);
+    const right = judged.filter((j) => j.ok).length;
+    const clearNights = recs.filter((r) => r.observed.clear_dark && r.observed.clear_dark.length).length;
+    const summary = `<div class="versum">
+      <div><b>${judged.length ? `${right} of ${judged.length}` : '–'}</b><span>forecasts right about the clouds${judged.length ? '' : ' (first result tomorrow morning)'}</span></div>
+      <div><b>${clearNights} of ${recs.length}</b><span>nights had clear dark hours (Tromsø + Alta, last ${Math.round(recs.length / 2)} nights)</span></div></div>`;
     return `
       <h3 style="margin-top:18px">How did it go? Past nights</h3>
+      ${summary}
       <div class="tbl-wrap"><table>
         <tr><th>Night</th><th>Spot</th><th>Evening forecast</th><th>Actually clear (dark)</th><th>Hp30 max</th><th>Result</th></tr>
         ${recs.map(row).join('')}
