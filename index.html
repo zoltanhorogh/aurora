@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Aurora Ops</title>
+<meta name="description" content="Aurora forecast dashboard for the Sky Princess Norway cruise, 10–24 October 2026.">
+<meta name="theme-color" content="#0b0c0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Aurora">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="aurora-glow"></div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div>
+        <h1>AURORA <span>OPS</span></h1>
+        <div class="sub">Sky Princess · Norway · 10–24 Oct 2026</div>
+      </div>
+      <div class="fresh" id="fresh"><span class="dot warn"></span>loading…</div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <a href="#outlook">Outlook</a>
+      <a href="#nights">Nights</a>
+      <a href="#trend">Trend</a>
+      <a href="#space">Space weather</a>
+      <a href="#live">Live</a>
+      <a href="#map-sec">Map</a>
+      <a href="#guide">Guide</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section id="outlook" style="margin-top:6px">
+    <div class="panel phase" id="phase"></div>
+    <div class="panel hero" id="hero" style="margin-top:14px"></div>
+  </section>
+
+  <section id="nights">
+    <h2>Every night of the cruise</h2>
+    <p class="hint" style="margin-top:-4px">Tap a night for the hour-by-hour view. Percent = overall chance of seeing aurora that night.</p>
+    <div class="nights" id="night-cards"></div>
+    <div class="panel" id="night-detail" style="margin-top:12px"></div>
+  </section>
+
+  <section id="trend">
+    <h2>How the outlook is changing</h2>
+    <div class="panel" id="trend-panel"></div>
+  </section>
+
+  <section id="space">
+    <h2>Space weather</h2>
+    <div class="grid2">
+      <div class="panel" id="kp27-panel"></div>
+      <div class="panel" id="kp3-panel"></div>
+    </div>
+    <div class="panel text-block" id="swpc-text" style="margin-top:14px"></div>
+  </section>
+
+  <section id="live">
+    <h2>Live now</h2>
+    <div class="tiles" id="live-tiles"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="panel" id="bz-panel"></div>
+      <div class="panel ovation" id="ovation-panel"></div>
+    </div>
+  </section>
+
+  <section id="map-sec">
+    <h2>Route &amp; nights</h2>
+    <div id="map"></div>
+    <p class="hint">Dots = where the ship is around midnight, colored by that night's rating. Map © OpenStreetMap contributors © CARTO.</p>
+  </section>
+
+  <section id="guide">
+    <h2>Guide</h2>
+    <div class="guide">
+      <div class="panel">
+        <h3>How to read the chance</h3>
+        <p>Each night gets one number that combines four things. All four must line up:</p>
+        <ul>
+          <li><b>Activity</b> – is the aurora strong enough to reach where the ship is? Up in the Arctic (Tromsø, Alta) it is overhead on most nights, even when "quiet". Further south it needs a geomagnetic storm.</li>
+          <li><b>Clear sky</b> – the chance of at least a 2-hour gap with ≤40% cloud in the dark. <b>In October this is usually the deciding factor on the Norwegian coast.</b></li>
+          <li><b>Darkness</b> – sun at least 12° below the horizon.</li>
+          <li><b>Moon &amp; lights</b> – moonlight and town lights wash out faint aurora. The moon is new on 10 Oct, so this trip is well timed.</li>
+        </ul>
+        <p>Ratings are conservative: <span class="chip good">▲ GOOD</span> ≥40% · <span class="chip warn">◆ FAIR</span> 25–40% · <span class="chip serious">▼ LOW</span> 10–25% · <span class="chip critical">✕ POOR</span> &lt;10%.</p>
+        <p><b>Confidence</b> tells you how far ahead we are looking. Weeks ahead only the trend is known; aurora itself can only be predicted reliably 30–90 minutes in advance.</p>
+      </div>
+      <div class="panel">
+        <h3>The numbers the experts watch</h3>
+        <ul>
+          <li><b>Kp (0–9)</b> – global geomagnetic activity. Kp 1–2 is enough in Tromsø/Alta, Kp 3+ around Trondheim/Ålesund, Kp 6+ over the southern North Sea.</li>
+          <li><b>Bz</b> – direction of the solar wind's magnetic field. <b>Negative (south) for 20+ minutes = the door is open</b>; the stronger and longer, the better.</li>
+          <li><b>Solar wind speed</b> – above ~500 km/s helps.</li>
+          <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot.</li>
+          <li><b>27-day recurrence</b> – the Sun turns every ~27 days, so what happened 27 days before a night often repeats.</li>
+          <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Viewing tips on the ship</h3>
+        <ul>
+          <li>Go to the darkest open deck, away from the lights, and <b>face north</b>.</li>
+          <li>Give your eyes 10–15 minutes to adjust, and don't look at your phone screen in between.</li>
+          <li>A weak aurora can look like a greyish-white cloud to the eye. <b>Your phone's night mode</b> (3–10 s, phone braced against the railing) shows the green.</li>
+          <li>At sea you have the darkest sky; in port the sea-facing side is best.</li>
+          <li>Ask guest services whether the bridge announces aurora sightings or offers a wake-up call.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Alerts on your iPhone</h3>
+        <ol>
+          <li>Install <b>ntfy</b> from the App Store (free, no account needed).</li>
+          <li>Tap <b>+</b>, then subscribe to the topic name you were given (it is private, so don't share it).</li>
+          <li>Allow notifications. For night-time alerts: Settings → Focus → Sleep → Apps → add <b>ntfy</b>, and turn on <b>Time Sensitive Notifications</b>.</li>
+        </ol>
+        <p>During the cruise you get an <b>evening outlook</b> around 17:00 ship time, and a <b>"go outside"</b> alert when live activity is good, the sky over the ship is clear and it is dark. Conservative thresholds, max one alert per 90 minutes unless it gets stronger.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div>Data: NOAA SWPC (Kp, 27-day outlook, OVATION, solar wind), NASA CCMC DONKI (CME model), Open-Meteo (ECMWF &amp; GFS ensemble cloud forecasts, ERA5 climate 2011–2025). Nothing here is an official forecast; it is a transparent combination of official data.</div>
+    <div id="sources" style="margin-top:6px"></div>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

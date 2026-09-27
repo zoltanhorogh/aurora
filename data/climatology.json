@@ -1,0 +1,124 @@
+{
+ "generated": "2026-09-27T07:49:12Z",
+ "source": "ERA5 reanalysis via Open-Meteo archive API",
+ "years": [
+  2011,
+  2025
+ ],
+ "window_days": 7,
+ "definition": ">= 2 consecutive dark hours (sun <= -12°) with cloud cover <= 40%",
+ "nights": {
+  "2026-10-10": {
+   "lat": 50.88,
+   "lon": 1.09,
+   "place": "At sea (Southampton → Trondheim)",
+   "p_clear": 0.44,
+   "mean_cloud": 66.4,
+   "n_nights": 225
+  },
+  "2026-10-11": {
+   "lat": 56.34,
+   "lon": 4.08,
+   "place": "At sea (Southampton → Trondheim)",
+   "p_clear": 0.382,
+   "mean_cloud": 71.8,
+   "n_nights": 225
+  },
+  "2026-10-12": {
+   "lat": 62.19,
+   "lon": 5.59,
+   "place": "At sea (Southampton → Trondheim)",
+   "p_clear": 0.289,
+   "mean_cloud": 71.7,
+   "n_nights": 225
+  },
+  "2026-10-13": {
+   "lat": 64.09,
+   "lon": 8.98,
+   "place": "At sea (Trondheim → Tromsø)",
+   "p_clear": 0.409,
+   "mean_cloud": 67.7,
+   "n_nights": 225
+  },
+  "2026-10-14": {
+   "lat": 69.0,
+   "lon": 14.26,
+   "place": "At sea (Trondheim → Tromsø)",
+   "p_clear": 0.329,
+   "mean_cloud": 72.9,
+   "n_nights": 225
+  },
+  "2026-10-15": {
+   "lat": 69.65,
+   "lon": 18.96,
+   "place": "Tromsø",
+   "p_clear": 0.24,
+   "mean_cloud": 78.5,
+   "n_nights": 225
+  },
+  "2026-10-16": {
+   "lat": 69.98,
+   "lon": 23.25,
+   "place": "Alta",
+   "p_clear": 0.182,
+   "mean_cloud": 83.6,
+   "n_nights": 225
+  },
+  "2026-10-17": {
+   "lat": 69.98,
+   "lon": 23.25,
+   "place": "At sea (Alta → Molde)",
+   "p_clear": 0.178,
+   "mean_cloud": 83.7,
+   "n_nights": 225
+  },
+  "2026-10-18": {
+   "lat": 68.36,
+   "lon": 12.33,
+   "place": "At sea (Alta → Molde)",
+   "p_clear": 0.311,
+   "mean_cloud": 74.5,
+   "n_nights": 225
+  },
+  "2026-10-19": {
+   "lat": 64.11,
+   "lon": 7.89,
+   "place": "At sea (Alta → Molde)",
+   "p_clear": 0.387,
+   "mean_cloud": 71.5,
+   "n_nights": 225
+  },
+  "2026-10-20": {
+   "lat": 62.99,
+   "lon": 5.98,
+   "place": "At sea (Molde → Ålesund)",
+   "p_clear": 0.316,
+   "mean_cloud": 73.0,
+   "n_nights": 225
+  },
+  "2026-10-21": {
+   "lat": 61.19,
+   "lon": 4.56,
+   "place": "At sea (Ålesund → Southampton)",
+   "p_clear": 0.329,
+   "mean_cloud": 74.4,
+   "n_nights": 225
+  },
+  "2026-10-22": {
+   "lat": 55.81,
+   "lon": 4.03,
+   "place": "At sea (Ålesund → Southampton)",
+   "p_clear": 0.409,
+   "mean_cloud": 72.1,
+   "n_nights": 225
+  },
+  "2026-10-23": {
+   "lat": 50.89,
+   "lon": 1.17,
+   "place": "At sea (Ålesund → Southampton)",
+   "p_clear": 0.458,
+   "mean_cloud": 69.0,
+   "n_nights": 225
+  }
+ }
+}
