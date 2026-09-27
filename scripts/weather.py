@@ -126,10 +126,18 @@ def view(series, ele):
 
 # ---------------------------------------------------------------- sea legs (waves along the route)
 
-def comfort(h):
+COMFORT = ["calm", "gentle", "rough", "very rough"]
+
+
+def comfort(h, period=None):
+    """Feel of the sea from the wave height; one step worse when the period is long (>= 10 s),
+    because long waves make even a big ship rise and roll slowly."""
     if h is None:
         return None
-    return "calm" if h < 1.25 else "gentle" if h < 2.5 else "rough" if h < 4 else "very rough"
+    level = 0 if h < 1.25 else 1 if h < 2.5 else 2 if h < 4 else 3
+    if period is not None and period >= 10 and level >= 1:
+        level = min(3, level + 1)
+    return COMFORT[level]
 
 
 def sea_legs_forecast(it, route, shift=timedelta(0)):
@@ -167,12 +175,13 @@ def sea_legs_forecast(it, route, shift=timedelta(0)):
         p["period"] = m["hourly"]["wave_period"][mi] if mi is not None else None
         p["wind"] = w["hourly"]["wind_speed_10m"][wi] if wi is not None else None
         p["gust"] = w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None
-        p["comfort"] = comfort(p["wave"])
+        p["comfort"] = comfort(p["wave"], p["period"])
     climate = {c["label"]: c for c in (load_json(DATA / "sea_climate.json", {}) or {}).get("legs", [])}
     for leg in legs:
         waves = [p["wave"] for p in leg["points"] if p["wave"] is not None]
         leg["wave_max"] = max(waves) if waves else None
-        leg["comfort"] = comfort(leg["wave_max"])
+        feels = [COMFORT.index(p["comfort"]) for p in leg["points"] if p["comfort"]]
+        leg["comfort"] = COMFORT[max(feels)] if feels else None
         leg["covered"] = round(len(waves) / len(leg["points"]), 2) if leg["points"] else 0
         leg["climate"] = climate.get(leg["label"])
     return legs
