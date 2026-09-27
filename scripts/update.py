@@ -247,6 +247,46 @@ def local_hm(t):
     return (t + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%H:%M")
 
 
+def sun_crossing(route, t0, t1, alt, rising):
+    """First time in [t0, t1] the sun at the ship's position crosses `alt` degrees (5-min scan + interpolation)."""
+    def f(t):
+        p = route.at(t)
+        return sun_alt(t, p["lat"], p["lon"]) - alt
+    step = timedelta(minutes=5)
+    t, prev = t0, f(t0)
+    while t < t1:
+        tn = t + step
+        cur = f(tn)
+        if (rising and prev < 0 <= cur) or (not rising and prev > 0 >= cur):
+            return t + step * (prev / (prev - cur))
+        t, prev = tn, cur
+    return None
+
+
+def night_events(d, route):
+    """Sunset, darkness, sunrise and ship arrivals/departures for the night starting on date d."""
+    noon = datetime(d.year, d.month, d.day, 10, tzinfo=UTC)
+    midnight = noon + timedelta(hours=14)
+    morning = midnight + timedelta(hours=12)
+    events = []
+    for kind, label, t0, t1, alt, rising in (
+            ("sunset", "Sunset", noon, midnight, -0.833, False),
+            ("dark_start", "Dark from", noon, midnight, DARK_SUN, False),
+            ("dark_end", "Dark until", midnight, morning, DARK_SUN, True),
+            ("sunrise", "Sunrise", midnight, morning, -0.833, True)):
+        t = sun_crossing(route, t0, t1, alt, rising)
+        if t:
+            events.append({"t": iso(t), "local": local_hm(t), "kind": kind, "label": label})
+    first = parse_utc(events[0]["t"]) if events else noon
+    last = parse_utc(events[-1]["t"]) if events else morning
+    for st in route.stops:
+        for key, verb in (("depart", "Ship departs"), ("arrive", "Ship arrives in")):
+            if key in st and first <= parse_utc(st[key]) <= last:
+                t = parse_utc(st[key])
+                events.append({"t": iso(t), "local": local_hm(t), "kind": key, "label": f"{verb} {st['name']}"})
+    return sorted(events, key=lambda e: e["t"])
+
+
 def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     hours = night_hours(d)
     mid = datetime(d.year, d.month, d.day, 22, tzinfo=UTC)
@@ -389,6 +429,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
                     "darkness": round(dark_f, 3), "moon_lights": round(ml_f, 3)},
         "score": round(score, 3), "rating": rating(score), "confidence": confidence(lead),
         "notes": notes,
+        "events": night_events(d, route),
         "hourly": rows,
     }
 

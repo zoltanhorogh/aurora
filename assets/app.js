@@ -20,6 +20,17 @@
   const shortDay = (s) => { const d = new Date(s + 'T12:00:00Z'); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
   const shortPlace = (p) => String(p).replace(/^At sea \((.*)\)$/, 'At sea · $1');
   const chip = (r) => `<span class="chip ${RATING[r][0]}">${RATING[r][1]} ${r}</span>`;
+  const CONF_LEVEL = { 'Trend only': 1, Low: 2, Medium: 3, High: 4 };
+  const confSig = (c, withWord) => {
+    const lv = CONF_LEVEL[c] || 1;
+    const bars = [1, 2, 3, 4].map((i) => `<i style="height:${3 + i * 2.5}px" class="${i <= lv ? 'on' : ''}"></i>`).join('');
+    return `<span class="sig" title="Confidence: ${c}"><span class="bars">${bars}</span>${withWord ? 'Confidence: ' : ''}${c}</span>`;
+  };
+  const eventAt = (n, kind) => (n.events || []).find((e) => e.kind === kind);
+  const darkText = (n) => {
+    const s = eventAt(n, 'sunset'), a = eventAt(n, 'dark_start'), b = eventAt(n, 'dark_end');
+    return (s ? `sunset ${s.local} · ` : '') + `dark ${a ? a.local : n.dark.start}–${b ? b.local : n.dark.end}`;
+  };
   const kpNeedText = (k) => (k < 1 ? 'even quiet activity (Kp 0–1) is enough here' : `needs about Kp ${k.toFixed(0)}+ here`);
   const ago = (t) => {
     const m = (Date.now() - new Date(t)) / 60000;
@@ -136,7 +147,7 @@
   function formula(n) {
     const f = n.factors;
     return `<div class="formula">Chance = activity ${pct(f.activity)} × clear sky ${pct(f.clear)} × darkness ${pct(f.darkness)} × moon &amp; lights ${pct(f.moon_lights)} = <b style="color:#fff">${pct(n.score)}</b>
-      · <span class="conf">Confidence: ${n.confidence}</span> · looking ${n.lead_days > 0 ? n.lead_days.toFixed(1) + ' days ahead' : 'at tonight'}</div>`;
+      · ${confSig(n.confidence, true)} · looking ${n.lead_days > 0 ? n.lead_days.toFixed(1) + ' days ahead' : 'at tonight'}</div>`;
   }
 
   // ------------------------------------------------------------ hero
@@ -154,7 +165,7 @@
         ${gauge(n.score, n.rating)}
         <div>${chip(n.rating)}</div>
         <div class="place">${esc(shortPlace(n.place))}</div>
-        <div class="when">${dayLabel(n.date)} · dark ${n.dark.start}–${n.dark.end}</div>
+        <div class="when">${dayLabel(n.date)} · ${darkText(n)}</div>
       </div>
       <div style="display:grid;gap:12px">
         ${factorRows(n)}
@@ -174,7 +185,7 @@
         <div class="pct">${pct(n.score)}</div>
         <div>${chip(n.rating)}</div>
         <div class="mini"><span>Act ${pct(n.factors.activity)}</span><span>Clear ${pct(n.factors.clear)}</span></div>
-        <span class="conf" style="width:max-content">${n.confidence}</span>
+        ${confSig(n.confidence, false)}
       </button>`).join('');
     document.querySelectorAll('.night').forEach((b) => b.addEventListener('click', () => {
       selected = b.dataset.date;
@@ -239,25 +250,68 @@
     return ['NO', 'no', 'cloudy'];
   }
 
+  // ︎ forces text (not emoji) presentation on iOS
+  const EVENT_GLYPH = { sunset: '☀︎↓', dark_start: '☾︎', dark_end: '☾︎', sunrise: '☀︎↑', depart: '⚓︎', arrive: '⚓︎' };
+  const EVENT_SHORT = { sunset: 'sunset', dark_start: 'dark from', dark_end: 'dark until', sunrise: 'sunrise', depart: 'ship departs', arrive: 'ship arrives' };
+  const evIcon = (k) => `<span class="evi ${k}" aria-hidden="true">${EVENT_GLYPH[k] || '•'}</span>`;
+
+  function sunStrip(n) {
+    const ev = n.events || [];
+    if (!ev.length) return '';
+    return `<div class="sunstrip">${ev.map((e) => `<div>${evIcon(e.kind)}<b>${e.local}</b>${EVENT_SHORT[e.kind]}</div>`).join('')}</div>`;
+  }
+
+  function bestWindow(n) {
+    const st = n.hourly.map((h) => hourStatus(h)[0]);
+    for (const want of ['GO', 'TRY']) {
+      let best = null, i = 0;
+      while (i < st.length) {
+        if (st[i] !== want) { i++; continue; }
+        let j = i;
+        while (j + 1 < st.length && st[j + 1] === want) j++;
+        if (!best || j - i > best[1] - best[0]) best = [i, j];
+        i = j + 1;
+      }
+      if (best) {
+        const end = new Date(new Date(n.hourly[best[1]].t).getTime() + 3600e3);
+        return { label: want, text: `${n.hourly[best[0]].local}–${hm(end)}` };
+      }
+    }
+    return null;
+  }
+
   function hoursTable(n) {
     const hasMet = n.hourly.some((h) => h.cloud_met != null);
     const rows = n.hourly.filter((h) => h.sun < -3);
+    const events = [...(n.events || [])];
+    const win = bestWindow(n);
+    const unknown = n.hourly.some((h) => h.dark && hourStatus(h)[0] === '?');
+    let html = '';
+    const evRow = (e) => `<div class="ev">${evIcon(e.kind)}${esc(e.label)} ${e.local}</div>`;
+    rows.forEach((h) => {
+      while (events.length && events[0].t <= h.t) html += evRow(events.shift());
+      const [lab, cls, why] = hourStatus(h);
+      const cloud = h.cloud_met ?? h.cloud_mean;
+      const pill = lab ? `<span class="st ${cls}">${lab}</span>` : `<span class="st day">${new Date(h.t).getUTCHours() >= 12 ? 'dusk' : 'dawn'}</span>`;
+      const right = lab === 'NO' ? `<span class="why">${why}</span>`
+        : h.kp >= h.kp_req ? `${h.kp.toFixed(1)} ≥ ${h.kp_req.toFixed(1)} <span class="ok">✓</span>`
+        : `<span class="why">${h.kp.toFixed(1)} &lt; ${h.kp_req.toFixed(1)}</span>`;
+      html += `<div class="hr ${cls}">
+        <span class="tm">${h.local}</span>${pill}
+        <span class="cb"><span class="bar2">${h.cloud_mean != null ? `<i style="width:${h.cloud_mean}%"></i>` : ''}${h.cloud_met != null ? `<s style="left:calc(${h.cloud_met}% - 1.5px)"></s>` : ''}</span><span class="cv">${cloud != null ? Math.round(cloud) + '%' : '–'}</span></span>
+        <span class="kp">${right}</span></div>`;
+    });
+    html += events.map(evRow).join('');
     return `
       <h3 style="margin-top:16px">Hour by hour</h3>
-      <div class="tbl-wrap"><table class="hours">
-        <tr><th>Time</th><th>Status</th><th>Kp<br><span class="why">fc / need</span></th><th>Cloud<br><span class="why">MET</span></th><th>Cloud<br><span class="why">models</span></th></tr>
-        ${rows.map((h) => {
-          const [lab, cls, why] = hourStatus(h);
-          return `<tr class="${h.dark ? '' : 'dim'}"><td>${h.local}</td>
-            <td>${lab ? `<span class="st ${cls}">${lab}</span>` : ''}${why ? `<span class="why block">${why}</span>` : ''}</td>
-            <td>${h.kp.toFixed(1)} / ${h.kp_req.toFixed(1)}</td>
-            <td>${h.cloud_met != null ? Math.round(h.cloud_met) + '%' : '–'}</td>
-            <td>${h.cloud_mean != null ? `${Math.round(h.cloud_mean)}%<span class="why block">${Math.round(h.cloud_p10)}–${Math.round(h.cloud_p90)}</span>` : '–'}</td></tr>`;
-        }).join('')}
-      </table></div>
-      <div class="hint">Cloud MET = MET Norway 2.5 km model · Cloud models = ECMWF/GFS ensemble average, small numbers = likely range.<br><span class="st go">GO</span> dark, activity chance ≥50% and cloud ≤30% · <span class="st try">TRY</span> activity chance ≥25% and cloud ≤70% · <span class="st no">NO</span> otherwise.
-        Status uses MET Norway clouds when available, otherwise the model average (range = likely spread).
-        ${hasMet ? '' : '<br>MET Norway (2.5 km) reaches a night about 2.5 days before it; until then that column stays empty.'}</div>`;
+      ${sunStrip(n)}
+      ${win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>`
+        : `<div class="win none">${unknown ? 'No cloud forecast for this night yet, so no hourly verdict.' : 'No good window tonight.'}</div>`}
+      <div class="hours2">${html}</div>
+      <div class="legend" style="margin-top:8px"><span><i style="background:#3987e5"></i>Cloud, models (ECMWF/GFS)</span><span><i style="background:#fff;width:3px"></i>Cloud, MET Norway</span><span>Kp: forecast ≥ needed ✓</span></div>
+      <div class="hint"><span class="st go">GO</span> dark, activity chance ≥50% and cloud ≤30% · <span class="st try">TRY</span> activity chance ≥25% and cloud ≤70% · <span class="st no">NO</span> otherwise.
+        Cloud % shown is MET Norway when available, otherwise the model average.
+        ${hasMet ? '' : 'MET Norway (2.5 km) reaches a night about 2.5 days before it.'} Exact numbers: "Show all data" below.</div>`;
   }
 
   function renderDetail() {
@@ -269,7 +323,7 @@
     $('#night-detail').innerHTML = `
       <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">${dayLabel(n.date)} · ${esc(shortPlace(n.place))}</h3>${chip(n.rating)}
-        <span style="font-size:20px;font-weight:700">${pct(n.score)}</span><span class="conf">Confidence: ${n.confidence}</span>
+        <span style="font-size:20px;font-weight:700">${pct(n.score)}</span>${confSig(n.confidence, true)}
       </div>
       <div class="grid2">
         <div>${factorRows(n)}<ul class="notes" style="margin-top:10px">${n.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
