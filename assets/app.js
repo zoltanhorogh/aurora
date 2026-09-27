@@ -574,7 +574,7 @@
       const d = all[i];
       return `<b>${dayLabel(d)}</b>
         <div class="row"><span>NOAA outlook</span><span>${out[d] ?? '–'}</span></div>
-        <div class="row"><span>Observed</span><span>${obs[d] != null && d <= today ? obs[d].toFixed(1) : '–'}</span></div>
+        <div class="row"><span>${d === today ? 'Observed so far today' : 'Observed'}</span><span>${obs[d] != null && d <= today ? obs[d].toFixed(1) : '–'}</span></div>
         <div class="row"><span>27 days earlier</span><span>${rec(d) != null ? rec(d).toFixed(1) : '–'}</span></div>`;
     }, (i) => hlBand(hl, bands, i, mt, ph));
   }
@@ -968,6 +968,7 @@
   const WX_ICON = (sym) => (sym ? `<img class="wxi" src="https://cdn.jsdelivr.net/gh/metno/weathericons@main/weather/svg/${encodeURIComponent(sym)}.svg" alt="${esc(sym.replace(/_/g, ' '))}" loading="lazy">` : '');
   const r1 = (v) => (v == null ? '–' : (Math.round(v * 10) / 10).toString());
   const r0 = (v) => (v == null ? '–' : Math.round(v).toString());
+  const kmh = (ms) => (ms == null ? '–' : Math.round(ms * 3.6).toString()); // MET gives m/s
   const LEVEL_CLS = (lvl) => (/red/.test(lvl || '') ? 'critical' : /orange/.test(lvl || '') ? 'serious' : 'warn');
 
   function wxRows(series, lat, compact) {
@@ -979,14 +980,15 @@
       const arrow = e.dir != null ? `<span class="warr" style="transform:rotate(${Math.round(e.dir + 180)}deg)">↑</span>` : '';
       const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}`;
       return `<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
-        <td class="${gCls}">${arrow}${r0(e.wind)}${e.gust != null ? `<span class="why"> (${r0(e.gust)})</span>` : ''}</td>
-        <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null && !compact ? `<span class="why"> ${r0(e.pp)}%</span>` : ''}</td></tr>`;
+        <td class="${gCls}">${arrow}${kmh(e.wind)}${e.gust != null ? `<span class="why"> (${kmh(e.gust)})</span>` : ''}</td>
+        <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null && !compact ? `<span class="why"> ${r0(e.pp)}%</span>` : ''}</td>
+        <td class="${e.uv >= 6 ? 'wx-orange' : e.uv >= 3 ? 'wx-uv' : ''}">${e.uv != null ? r0(e.uv) : '–'}</td></tr>`;
     }).join('');
   }
   const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
-    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind</th><th>Rain</th></tr>${wxRows(series, lat, compact)}</table></div>
-    <div class="why" style="margin-top:2px">Wind in m/s, gust in brackets · rain in mm${compact ? '' : ', chance in %'}</div>`;
-  const wxSummaryLine = (s) => (s ? `${r0(s.t_min)}–${r0(s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${r0(s.gust_max)} m/s · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
+    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind</th><th>Rain</th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
+    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain in mm${compact ? '' : ', chance in %'} · UV index for a clear sky: 3+ = use sunscreen</div>`;
+  const wxSummaryLine = (s) => (s ? `${r0(s.t_min)}–${r0(s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
   function renderWeather() {
@@ -1015,7 +1017,7 @@
     const portDay = p.series.length
       ? `<div class="wx-sum">${wxSummaryLine(p.summary)}</div>${adviceChips(p.advice)}${wxTable(p.series, lat)}`
       : `<div class="wx-sum">No forecast for this day yet: MET Norway reaches it about 9 days before (6-hourly), hourly from about 2.5 days before.</div>
-         ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0(c.temp_min_mean)}–${r0(c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${r1(c.wind_mean)} m/s, gusts up to ~${r0(c.gust_p90)}</div></div>
+         ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0(c.temp_min_mean)}–${r0(c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${kmh(c.wind_mean)} km/h, gusts up to ~${kmh(c.gust_p90)} km/h</div></div>
          <div class="fb"><div class="k">Rain or snow</div><div class="v">${Math.round(c.wet_hours_share * 100)}% of hours</div><div class="s">${c.snow_share_of_wet > 0.05 ? `${Math.round(c.snow_share_of_wet * 100)}% of those as snow/sleet` : 'almost always rain, not snow'}</div></div></div>` : ''}`;
     const sea = p.sea ? `<div class="wx-sea"><b>Water shuttle (tender), ${esc(p.sea.label)}:</b> ${p.sea.wave_max != null ? `waves up to ${r1(p.sea.wave_max)} m · sea ${r1(p.sea.sst)} °C · ${esc(p.sea.risk)}` : 'sea forecast not available for this day yet (about 8 days ahead)'}</div>` : '';
     const now = p.now_series && p.now_series.length ? `<details class="wx-now"><summary><b>Right now at ${esc(p.name.replace(/ \((departure|arrival)\)/, ''))}:</b> next 48 hours · ${wxSummaryLine(p.now_summary)}</summary>
@@ -1034,7 +1036,7 @@
       <h3 style="margin:0 0 4px">${esc(p.name)} <span class="why">· in port ${win}</span></h3>
       ${portDay}${sea}${now}
       ${spots ? `<h3 style="margin-top:16px">Hikes and viewpoints <span class="why">(forecast at the summit's altitude)</span></h3>${spots}` : ''}
-      <p class="hint">Colours: <span class="wx-cold">feels ≤0 °C</span> · <span class="wx-orange">gusts ≥15 m/s</span> · <span class="wx-red">gusts ≥20 m/s</span> · <span class="wx-wet">rain ≥0.5 mm/h</span>. Arrow = where the wind blows to. Times are local.</p>`;
+      <p class="hint">Colours: <span class="wx-cold">feels ≤0 °C</span> · <span class="wx-orange">gusts ≥54 km/h</span> · <span class="wx-red">gusts ≥72 km/h</span> · <span class="wx-wet">rain ≥0.5 mm/h</span>. Arrow = where the wind blows to. Times are local.</p>`;
   }
 
   // ------------------------------------------------------------ nav highlight

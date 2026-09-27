@@ -44,6 +44,7 @@ def met_complete(lat, lon, alt=None):
             "wind": ins.get("wind_speed"), "gust": ins.get("wind_speed_of_gust"), "dir": ins.get("wind_from_direction"),
             "cloud": ins.get("cloud_area_fraction"), "low": ins.get("cloud_area_fraction_low"),
             "fog": ins.get("fog_area_fraction"), "rh": ins.get("relative_humidity"),
+            "uv": ins.get("ultraviolet_index_clear_sky"),
             "pr": det.get("precipitation_amount"), "pp": det.get("probability_of_precipitation"),
             "thunder": det.get("probability_of_thunder"), "sym": (nx.get("summary") or {}).get("symbol_code"),
         })
@@ -81,6 +82,7 @@ def summarize(series):
         "pp_max": max((e["pp"] or 0) for e in series),
         "thunder_max": max((e["thunder"] or 0) for e in series),
         "snow": "snow" in syms, "sleet": "sleet" in syms,
+        "uv_max": max((e.get("uv") or 0) for e in series),
     }
 
 
@@ -226,7 +228,7 @@ def main():
             spots.append({**s, "series": ss, "summary": summ,
                           "advice": advice(summ, s["kind"]),
                           "view": view(ss, s["ele"]) if s["kind"] in ("summit", "viewpoint") else None,
-                          "now_series": [{k: e[k] for k in ("t", "T", "feels", "gust", "wind", "pr", "pp", "sym", "low", "fog")} for e in ns],
+                          "now_series": [{k: e[k] for k in ("t", "T", "feels", "gust", "wind", "dir", "pr", "pp", "sym", "low", "fog", "uv")} for e in ns],
                           "now_summary": nsumm, "now_advice": advice(nsumm, s["kind"]),
                           "now_view": view(ns, s["ele"]) if s["kind"] in ("summit", "viewpoint") else None})
         entry["spots"] = spots

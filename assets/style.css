@@ -220,6 +220,7 @@ table.wx td:nth-child(2) { text-align: left; }
 .wx-orange { color: var(--serious); font-weight: 600; }
 .wx-red { color: var(--critical); font-weight: 700; }
 .wx-wet { color: #9ec5f4; }
+.wx-uv { color: var(--warn); font-weight: 600; }
 .wx-snow { font-size: 10px; color: #dfe6ff; border: 1px solid #5a6b8a; border-radius: 4px; padding: 0 3px; }
 .wx-sum { font-size: 13px; color: var(--text-2); margin: 6px 0; }
 .wx-sea { font-size: 13px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 10px 0; }
