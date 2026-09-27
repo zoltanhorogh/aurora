@@ -991,6 +991,35 @@
   const wxSummaryLine = (s) => (s ? `${r0(s.t_min)}–${r0(s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
+  // At sea: waves, swell and wind every 3 h at the ship's planned position, per sea leg.
+  const CMF_CLS = { calm: 'cmf-calm', gentle: 'cmf-gentle', rough: 'cmf-rough', 'very rough': 'cmf-vrough' };
+  const cmf = (c) => (c ? `<span class="cmf ${CMF_CLS[c]}">${c}</span>` : '–');
+  function seaView() {
+    const legs = WX.sea_legs || [];
+    const dayHm = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return `${DOW[d.getUTCDay()]} ${pad(d.getUTCHours())}:00`; };
+    const blocks = legs.map((leg) => {
+      const pts = leg.points.filter((p) => p.wave != null);
+      const c = leg.climate;
+      const lat = leg.points.length ? leg.points[Math.floor(leg.points.length / 2)].lat : 65;
+      const head = pts.length
+        ? `waves up to <b>${r1(leg.wave_max)} m</b> · ${cmf(leg.comfort)}${leg.covered < 1 ? ` <span class="why">(forecast covers ${Math.round(leg.covered * 100)}% of the leg so far)</span>` : ''}`
+        : (c ? `<span class="why">no forecast yet · typical October:</span> ${r1(c.wave_mean)} m on average` : '<span class="why">no forecast yet</span>');
+      const body = pts.length
+        ? `<div class="tbl-wrap"><table class="wx"><tr><th>Time</th><th>Waves</th><th>Swell</th><th>Period</th><th>Wind</th><th>Feel</th></tr>
+            ${pts.map((p) => `<tr><td>${dayHm(p.t, p.lat)}</td><td>${r1(p.wave)} m</td><td>${r1(p.swell)} m</td><td>${r0(p.period)} s</td>
+              <td class="${p.gust >= 20 ? 'wx-red' : p.gust >= 15 ? 'wx-orange' : ''}">${kmh(p.wind)}<span class="why"> (${kmh(p.gust)})</span></td><td>${cmf(p.comfort)}</td></tr>`).join('')}</table></div>
+            <div class="why">Every 3 hours at the ship's planned position · wind in km/h, gust in brackets</div>`
+        : (c ? `<div class="farbox"><div class="fb"><div class="k">Typical October on this leg (${esc(String(2011))}–2025)</div><div class="v">${r1(c.wave_mean)} m</div><div class="s">average wave height · 1 in 10 hours above ${r1(c.wave_p90)} m</div></div>
+            <div class="fb"><div class="k">Rough or worse</div><div class="v">${Math.round(c.share_over_2_5 * 100)}% of hours</div><div class="s">waves over 2.5 m · over 4 m: ${Math.round(c.share_over_4 * 100)}%</div></div></div>
+            <div class="why" style="margin-top:6px">The wave forecast reaches about 10 days ahead; after that this switches to an hour-by-hour table.</div>` : '');
+      return `<details class="spot" ${pts.length ? 'open' : ''}><summary><b>${esc(leg.label)}</b> <span class="why">${localDay(leg.start, lat)} – ${localDay(leg.end, lat)}</span><br>${head}</summary>${body}</details>`;
+    }).join('');
+    return `<h3 style="margin:0 0 4px">At sea <span class="why">· waves along the route</span></h3>
+      <p class="hint" style="margin-top:0">How much the sea will move the ship on each crossing. Waves = typical height of the bigger waves; swell = long waves from distant storms, the main cause of slow rolling; a longer period feels gentler.</p>
+      ${blocks}
+      <p class="hint">Feel: ${cmf('calm')} under 1.25 m, hardly noticeable · ${cmf('gentle')} 1.25–2.5 m, light motion · ${cmf('rough')} 2.5–4 m, noticeable rolling, seasick-prone take precautions · ${cmf('very rough')} over 4 m, some outer decks may close. Sky Princess is a 145,000-tonne ship with stabilisers. Source: Open-Meteo marine (ECMWF / Météo-France wave models), typical values ERA5.</p>`;
+  }
+
   function renderWeather() {
     const tabs = $('#wx-tabs'), box = $('#wx-port');
     if (!WX || !WX.ports) { box.innerHTML = '<div class="empty">Weather data will appear after the next update.</div>'; return; }
@@ -1008,8 +1037,10 @@
       const upcoming = WX.ports.find((p) => new Date(p.window[1]) > Date.now());
       wxPort = (upcoming || WX.ports[0]).id;
     }
-    tabs.innerHTML = WX.ports.map((p) => `<button class="btn ${p.id === wxPort ? 'on' : ''}" data-p="${p.id}">${esc(p.name.replace(' (departure)', '').replace(' (arrival)', ''))} <span class="why">${shortDay(p.window[0].slice(0, 10))}</span></button>`).join('');
+    tabs.innerHTML = WX.ports.map((p) => `<button class="btn ${p.id === wxPort ? 'on' : ''}" data-p="${p.id}">${esc(p.name.replace(' (departure)', '').replace(' (arrival)', ''))} <span class="why">${shortDay(p.window[0].slice(0, 10))}</span></button>`).join('')
+      + (WX.sea_legs && WX.sea_legs.length ? `<button class="btn ${wxPort === 'SEA' ? 'on' : ''}" data-p="SEA">At sea <span class="why">waves</span></button>` : '');
     tabs.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { wxPort = b.dataset.p; renderWeather(); }));
+    if (wxPort === 'SEA') { box.innerHTML = seaView(); return; }
     const p = WX.ports.find((x) => x.id === wxPort);
     const lat = p.id.startsWith('SOU') ? 50.9 : 65;
     const win = `${localDay(p.window[0], lat)} ${localHm(p.window[0], lat)}–${localHm(p.window[1], lat)}`;

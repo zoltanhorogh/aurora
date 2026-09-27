@@ -124,6 +124,60 @@ def view(series, ele):
     return "Clear view likely"
 
 
+# ---------------------------------------------------------------- sea legs (waves along the route)
+
+def comfort(h):
+    if h is None:
+        return None
+    return "calm" if h < 1.25 else "gentle" if h < 2.5 else "rough" if h < 4 else "very rough"
+
+
+def sea_legs_forecast(it, route, shift=timedelta(0)):
+    """Waves, swell and wind every 3 h at the ship's planned position on each sea leg (Open-Meteo marine).
+    `shift` is for testing only (moves the cruise dates so today's forecast covers them)."""
+    stops = it["stops"]
+    legs, pts = [], []
+    for a, b in zip(stops, stops[1:]):
+        s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
+        t = s.replace(minute=0, second=0) + timedelta(hours=1)
+        leg_pts = []
+        while t < e:
+            p = route.at(t)
+            leg_pts.append({"t": iso(t + shift), "lat": round(p["lat"], 2), "lon": round(p["lon"], 2)})
+            t += timedelta(hours=3)
+        legs.append({"label": f"{a['name']} → {b['name']}", "start": iso(s + shift), "end": iso(e + shift), "points": leg_pts})
+        pts.extend(leg_pts)
+    lats = ",".join(str(p["lat"]) for p in pts)
+    lons = ",".join(str(p["lon"]) for p in pts)
+    # The APIs only accept dates inside their forecast range, so ask for the next 16 days and use what overlaps.
+    marine = http_get_json("https://marine-api.open-meteo.com/v1/marine"
+                           f"?latitude={lats}&longitude={lons}&hourly=wave_height,swell_wave_height,wave_period"
+                           "&forecast_days=16&timezone=GMT", timeout=120)
+    wind = http_get_json("https://api.open-meteo.com/v1/forecast"
+                         f"?latitude={lats}&longitude={lons}&hourly=wind_speed_10m,wind_gusts_10m&wind_speed_unit=ms"
+                         "&forecast_days=16&timezone=GMT", timeout=120)
+    marine = marine if isinstance(marine, list) else [marine]
+    wind = wind if isinstance(wind, list) else [wind]
+    for p, m, w in zip(pts, marine, wind):
+        key = p["t"][:13] + ":00"
+        mi = m["hourly"]["time"].index(key) if key in m["hourly"]["time"] else None
+        wi = w["hourly"]["time"].index(key) if key in w["hourly"]["time"] else None
+        p["wave"] = m["hourly"]["wave_height"][mi] if mi is not None else None
+        p["swell"] = m["hourly"]["swell_wave_height"][mi] if mi is not None else None
+        p["period"] = m["hourly"]["wave_period"][mi] if mi is not None else None
+        p["wind"] = w["hourly"]["wind_speed_10m"][wi] if wi is not None else None
+        p["gust"] = w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None
+        p["comfort"] = comfort(p["wave"])
+    climate = {c["label"]: c for c in (load_json(DATA / "sea_climate.json", {}) or {}).get("legs", [])}
+    for leg in legs:
+        waves = [p["wave"] for p in leg["points"] if p["wave"] is not None]
+        leg["wave_max"] = max(waves) if waves else None
+        leg["comfort"] = comfort(leg["wave_max"])
+        leg["covered"] = round(len(waves) / len(leg["points"]), 2) if leg["points"] else 0
+        leg["climate"] = climate.get(leg["label"])
+    return legs
+
+
 # ---------------------------------------------------------------- warnings
 
 def point_in_ring(lon, lat, ring):
@@ -251,7 +305,8 @@ def main():
             t += timedelta(hours=6)
     warn = safe("met_alerts", alerts, points, default=[])
 
-    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sources": status,
+    sea = safe("open_meteo_marine", sea_legs_forecast, it, route, shift, default=[])
+    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sea_legs": sea, "sources": status,
                                       "test_shift_days": args.shift_days or None}, compact=True)
     print("weather done", iso(now), status)
     for p in ports_out:
