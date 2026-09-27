@@ -1,0 +1,33 @@
+{
+  "ports": [
+    {"id": "SOU",  "name": "Southampton (departure)", "stop": "SOU",  "lat": 50.90, "lon": -1.40, "hours_before": 8},
+    {"id": "TRD",  "name": "Trondheim",   "stop": "TRD", "lat": 63.43, "lon": 10.40},
+    {"id": "TOS",  "name": "Tromsø",      "stop": "TOS", "lat": 69.65, "lon": 18.96},
+    {"id": "ALT",  "name": "Alta",        "stop": "ALT", "lat": 69.97, "lon": 23.27, "sea": {"lat": 70.00, "lon": 23.20, "label": "Altafjord at the anchorage"}},
+    {"id": "MOL",  "name": "Molde",       "stop": "MOL", "lat": 62.74, "lon": 7.16},
+    {"id": "AES",  "name": "Ålesund",     "stop": "AES", "lat": 62.47, "lon": 6.15},
+    {"id": "SOU2", "name": "Southampton (arrival)", "stop": "SOU2", "lat": 50.90, "lon": -1.40, "hours_after": 7}
+  ],
+  "spots": [
+    {"port": "TRD", "name": "Kristiansten Fortress", "lat": 63.4270, "lon": 10.4109, "ele": 70,  "kind": "viewpoint"},
+    {"port": "TRD", "name": "Burmaklippen",          "lat": 63.3993, "lon": 10.4745, "ele": 167, "kind": "viewpoint"},
+    {"port": "TRD", "name": "Våttakammen",           "lat": 63.4369, "lon": 10.3347, "ele": 286, "kind": "summit"},
+    {"port": "TRD", "name": "Gråkallen (Bymarka)",   "lat": 63.4211, "lon": 10.2522, "ele": 554, "kind": "summit"},
+    {"port": "TRD", "name": "Lian lake (tram 9)",    "lat": 63.4030, "lon": 10.3127, "ele": 264, "kind": "walk"},
+    {"port": "TRD", "name": "Ladestien coastal path","lat": 63.4358, "lon": 10.5093, "ele": 5,   "kind": "coast"},
+    {"port": "TRD", "name": "Storfossen waterfall (Steinkjer)", "lat": 64.1320, "lon": 11.8253, "ele": 75, "kind": "walk"},
+    {"port": "TOS", "name": "Storsteinen (Fjellheisen / Sherpatrappa)", "lat": 69.6345, "lon": 19.0020, "ele": 421, "kind": "summit"},
+    {"port": "TOS", "name": "Fløya",                 "lat": 69.6203, "lon": 18.9991, "ele": 671, "kind": "summit"},
+    {"port": "TOS", "name": "Brosmetinden (Kvaløya)", "lat": 69.7551, "lon": 18.3192, "ele": 526, "kind": "summit"},
+    {"port": "TOS", "name": "Trehørningen (Kvaløya)", "lat": 69.6845, "lon": 18.3767, "ele": 868, "kind": "summit"},
+    {"port": "TOS", "name": "Nordtinden",            "lat": 69.8276, "lon": 18.7425, "ele": 640, "kind": "summit"},
+    {"port": "TOS", "name": "Ersfjordbotn beach",    "lat": 69.6944, "lon": 18.6208, "ele": 5,   "kind": "coast"},
+    {"port": "ALT", "name": "Komsa viewpoint",       "lat": 69.9840, "lon": 23.2839, "ele": 213, "kind": "summit"},
+    {"port": "ALT", "name": "Alta canyon (Sautso)",  "lat": 69.7799, "lon": 23.5574, "ele": 404, "kind": "viewpoint"},
+    {"port": "MOL", "name": "Varden (Molde Panorama)", "lat": 62.7483, "lon": 7.1262, "ele": 404, "kind": "summit"},
+    {"port": "MOL", "name": "Atlantic Ocean Road",   "lat": 63.0168, "lon": 7.3547, "ele": 10,  "kind": "coast"},
+    {"port": "AES", "name": "Aksla viewpoint",       "lat": 62.4752, "lon": 6.1678, "ele": 165, "kind": "viewpoint"},
+    {"port": "AES", "name": "Sukkertoppen",          "lat": 62.4594, "lon": 6.0995, "ele": 314, "kind": "summit"},
+    {"port": "AES", "name": "Alnes lighthouse (Godøy)", "lat": 62.4891, "lon": 5.9663, "ele": 11, "kind": "coast"}
+  ]
+}

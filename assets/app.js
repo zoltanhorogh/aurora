@@ -42,6 +42,7 @@
   let D = null;      // latest.json
   let HIST = null;   // history.json
   let VER = null;    // verification.json
+  let WX = null;     // weather.json
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let selected = null;
   let bzPts = null;  // loaded on demand
@@ -275,10 +276,9 @@
       : c <= 70 ? ['Broken', 'broken', `<path d="${MOON_SVG}" fill="#dfe6ff" transform="translate(3 -1) scale(.75)"/><path d="${CLOUD_SVG}" fill="#b4bac4"/>`]
       : ['Overcast', 'overcast', `<path d="${CLOUD_SVG}" fill="#8f96a3"/>`];
     const d = c - CLEAR_LINE;
-    const dist = d <= 0 ? `<span class="under">✓ ${-d} under 40</span>` : `<span class="over">${d} over 40</span>`;
     return `<span class="sky ${cls}">
       <span class="l1"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${icon}</svg>${word} ${c}%${range ? ` <span class="rng">(${range})</span>` : ''}</span>
-      <span class="l2"><span class="cbar"><i class="${d <= 0 ? 'ok' : ''}" style="width:${c}%"></i><em></em></span>${dist}</span></span>`;
+      <span class="l2"><span class="cbar"><i class="${d <= 0 ? 'ok' : ''}" style="width:${c}%"></i><em></em></span></span></span>`;
   }
 
   // ︎ forces text (not emoji) presentation on iOS
@@ -651,7 +651,7 @@
     $('#live-tiles').innerHTML =
       t('Ship', `<span style="font-size:17px">${esc(shortPlace(s.place))}</span>`, s.sailing ? `${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)` : 'Not sailing yet: shows the planned start') +
       t('Kp now', '…', '', 'lt-kp') + hp30Tile(need, t) + t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') +
-      t('Aurora overhead', s.sailing ? '…' : '–', s.sailing ? 'NOAA OVATION at the ship' : '<button class="btn" id="ov-btn" style="padding:3px 10px;font-size:12px">check Tromsø</button>', 'lt-ov');
+      t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
     const set = (id, v, sub) => { const e = document.getElementById(id); if (e) { e.querySelector('.v').innerHTML = v; e.querySelector('.s').innerHTML = sub; } };
 
     getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
@@ -667,35 +667,66 @@
       set('lt-sw', `${v}<small> km/s</small>`, v >= 500 ? '✓ fast' : v >= 400 ? 'moderate' : 'slow');
     }).catch(() => set('lt-sw', '–', 'offline'));
 
-    const loadOvation = async (lat, lon, label) => {
-      set('lt-ov', '…', 'loading NOAA model (≈1 MB)');
-      try {
-        const o = await getOvation();
-        const lon360 = ((lon % 360) + 360) % 360;
-        let local = 0, north = 0;
-        for (const [glon, glat, p] of o.coordinates) {
-          const dl = Math.min(Math.abs(glon - lon360), 360 - Math.abs(glon - lon360));
-          if (dl <= 1 && Math.abs(glat - lat) <= 1) local = Math.max(local, p);
-          if (dl <= 10 && glat >= lat && glat <= lat + 8) north = Math.max(north, p);
-        }
-        set('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
-      } catch { set('lt-ov', '–', 'offline'); }
-    };
-    if (s.sailing) loadOvation(s.lat, s.lon, 'at the ship');
-    else { const b = document.getElementById('ov-btn'); if (b) b.addEventListener('click', () => loadOvation(69.65, 18.96, 'Tromsø')); }
+    // Everything loads automatically (the ship has fast Starlink-based Wi-Fi); ~2.5 MB per page view.
+    getOvation().then((o) => {
+      const [lat, lon, label] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'Tromsø (not sailing yet)'];
+      const { local, north } = ovationAt(o, lat, lon);
+      set('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+    }).catch(() => set('lt-ov', '–', 'offline'));
 
     $('#bz-panel').innerHTML = `<h3>Solar wind Bz, last 24 h</h3>
       <p class="hint">Negative (south) Bz lets solar-wind energy in; 20+ minutes below −5 nT often triggers aurora within the hour.</p>
-      <button class="btn" id="bz-btn">Load chart (≈1.5 MB)</button><div class="chart" id="bz-chart"></div>`;
+      <button class="btn" id="bz-btn">Loading…</button><div class="chart" id="bz-chart"></div>`;
     $('#bz-btn').addEventListener('click', loadBz);
+    loadBz();
 
     $('#ovation-panel').innerHTML = `<h3>Aurora right now over Norway</h3>
       <p class="hint" style="margin-top:0">NOAA OVATION model: where aurora is likely overhead in the next 30–90 minutes. It is often also visible a few hundred km south of the coloured band, low in the northern sky.</p>
-      <div id="ovmap"><button class="btn" id="ovmap-btn">Load aurora map (≈1 MB)</button></div>
+      <div id="ovmap"></div>
       <div class="legend" style="margin-top:8px"><span><i style="background:#1faa59"></i>possible (≥5%)</span><span><i style="background:#9fd13b"></i>likely (≥20%)</span><span><i style="background:#f2c230"></i>very likely (≥40%)</span><span><i style="background:#e5533d"></i>strong (≥60%)</span></div>
       <div class="hint" id="ovmap-meta"></div>`;
-    $('#ovmap-btn').addEventListener('click', drawOvationMap);
-    if (s.sailing) drawOvationMap();
+    drawOvationMap();
+    renderRouteOvation();
+  }
+
+  // OVATION probability overhead (±1°) and the strongest value within view to the north (up to 8° north, ±10° lon).
+  function ovationAt(o, lat, lon) {
+    const lon360 = ((lon % 360) + 360) % 360;
+    let local = 0, north = 0;
+    for (const [glon, glat, p] of o.coordinates) {
+      const dl = Math.min(Math.abs(glon - lon360), 360 - Math.abs(glon - lon360));
+      if (dl <= 1 && Math.abs(glat - lat) <= 1) local = Math.max(local, p);
+      if (dl <= 10 && glat >= lat && glat <= lat + 8) north = Math.max(north, p);
+    }
+    return { local, north };
+  }
+
+  // Collapsed extra: the same "overhead now" numbers for every port and every at-sea night position.
+  async function renderRouteOvation() {
+    const body = $('#route-ov-body');
+    if (!body) return;
+    const R = Math.PI / 180;
+    const kpNeed = (lat, lon) => {
+      const m = Math.asin(Math.sin(lat * R) * Math.sin(80.8 * R) + Math.cos(lat * R) * Math.cos(80.8 * R) * Math.cos((lon + 72.6) * R)) / R;
+      return Math.max(0, Math.min(9, (67.5 - m) / 1.8 + 0.5));
+    };
+    const pts = [];
+    const seen = new Set();
+    for (const st of D.trip.stops) {
+      if (seen.has(st.name)) continue;
+      seen.add(st.name);
+      pts.push({ when: (st.arrive || st.depart).slice(0, 10), where: st.name, lat: st.lat, lon: st.lon });
+    }
+    for (const n of D.nights) if (n.state === 'sea') pts.push({ when: n.date, where: 'At sea (night)', lat: n.lat, lon: n.lon });
+    pts.sort((a, b) => (a.when < b.when ? -1 : a.when > b.when ? 1 : 0));
+    try {
+      const o = await getOvation();
+      body.innerHTML = `<div class="tbl-wrap"><table>
+        <tr><th>Where</th><th>Overhead now</th><th>In view north</th><th>Kp needed</th></tr>
+        ${pts.map((p) => { const v = ovationAt(o, p.lat, p.lon); return `<tr><td>${esc(p.where)} <span class="why">${shortDay(p.when)}</span></td><td>${v.local}%</td><td>${v.north}%</td><td>${kpNeed(p.lat, p.lon).toFixed(1)}</td></tr>`; }).join('')}
+      </table></div>
+      <p class="hint">Just for fun: what NOAA's OVATION model says right now for each place on the route (sea positions = where the ship will be around midnight). It is the aurora of this moment, not a forecast for the cruise dates.</p>`;
+    } catch { body.innerHTML = '<div class="empty">Could not load the NOAA model (offline?).</div>'; }
   }
 
   // NOAA OVATION grid (1° x 1°) drawn on a Norway-centred map, with route and ship.
@@ -807,61 +838,82 @@
     const recs = VER && VER.nights ? Object.values(VER.nights).filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.spot.localeCompare(b.spot))) : [];
     if (!recs.length) return '';
     const hoursTxt = (arr) => (arr && arr.length ? `${arr[0]}–${arr[arr.length - 1]} (${arr.length} h)` : 'none');
-    // Did the evening forecast get the clouds right? Returns null when no forecast was recorded.
-    const judge = (r) => {
-      const o = r.observed, f = r.forecast;
+    const LEADS = [['forecast_2d', '2 days before'], ['forecast_1d', '1 day before'], ['forecast', 'Same evening']];
+    // Did a recorded forecast get the clouds right? null when not recorded.
+    const judge = (r, key) => {
+      const o = r.observed, f = r[key];
       if (!f) return null;
       const good = f.hours.filter((h) => h[1] === 'GO' || h[1] === 'TRY').map((h) => h[0]);
       const clear = new Set([...(o.clear_dark || []), ...(o.clear_twilight || [])]);
       const ok = good.length ? good.some((h) => clear.has(h)) : !clear.size;
-      const text = good.length ? (ok ? 'clear as forecast' : 'stayed cloudy') : (ok ? 'cloudy as forecast' : 'missed clear hours');
-      return { ok, text, good };
+      return { ok, good, f };
+    };
+    const fcCell = (r) => {
+      const lines = LEADS.map(([key, label]) => {
+        const j = judge(r, key);
+        if (!j) return '';
+        const win = j.good.length ? `${j.good[0]}–${j.good[j.good.length - 1]}` : 'no window';
+        return `<div><span class="why">${label}:</span> ${pct(j.f.score)} ${j.f.rating} · ${win} ${j.ok ? '<span class="ok">✓</span>' : '<span class="why">✕</span>'}</div>`;
+      }).join('');
+      return lines || '<span class="why">not recorded</span>';
     };
     const row = (r) => {
-      const o = r.observed, f = r.forecast, j = judge(r);
-      const fc = f ? `${pct(f.score)} ${f.rating}${j.good.length ? ` · ${j.good[0]}–${j.good[j.good.length - 1]}` : ' · no window'}` : '<span class="why">not recorded</span>';
-      const res = j ? (j.ok ? `<span class="ok">✓ ${j.text}</span>` : `<span class="why">✕ ${j.text}</span>`) : '';
-      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td>${fc}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td><td>${res}</td></tr>`;
+      const o = r.observed;
+      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
     };
-    const judged = recs.map(judge).filter(Boolean);
-    const right = judged.filter((j) => j.ok).length;
+    const score = (key) => {
+      const js = recs.map((r) => judge(r, key)).filter(Boolean);
+      return js.length ? `${js.filter((j) => j.ok).length} of ${js.length}` : '–';
+    };
     const clearNights = recs.filter((r) => r.observed.clear_dark && r.observed.clear_dark.length).length;
     const summary = `<div class="versum">
-      <div><b>${judged.length ? `${right} of ${judged.length}` : '–'}</b><span>forecasts right about the clouds${judged.length ? '' : ' (first result tomorrow morning)'}</span></div>
-      <div><b>${clearNights} of ${recs.length}</b><span>nights had clear dark hours (Tromsø + Alta, last ${Math.round(recs.length / 2)} nights)</span></div></div>`;
+      <div><b>${score('forecast')}</b><span>same-evening forecasts right about the clouds</span></div>
+      <div><b>${score('forecast_1d')} · ${score('forecast_2d')}</b><span>right 1 day · 2 days before</span></div>
+      <div><b>${clearNights} of ${recs.length}</b><span>nights had clear dark hours (Tromsø + Alta)</span></div></div>`;
     return `
       <h3 style="margin-top:18px">How did it go? Past nights</h3>
       ${summary}
       <div class="tbl-wrap"><table>
-        <tr><th>Night</th><th>Spot</th><th>Evening forecast</th><th>Actually clear (dark)</th><th>Hp30 max</th><th>Result</th></tr>
+        <tr><th>Night</th><th>Spot</th><th style="text-align:left">Forecast (✓ = clouds right)</th><th>Actually clear (dark)</th><th>Hp30 max</th></tr>
         ${recs.map(row).join('')}
       </table></div>
-      <p class="hint">Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval, so a strong display is possible with a low value. Forecasts are recorded from today on; older nights show only what happened.</p>`;
+      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
   }
 
-  // ------------------------------------------------------------ model check (tonight in Tromsø and Alta)
+  // ------------------------------------------------------------ model check (next 3 nights in Tromsø and Alta)
+  let checkDay = 0;
   let checkSpot = 0;
-  const checkNight = () => (D.model_check ? D.model_check.nights[checkSpot] : null);
+  const checkNights = () => {
+    const mc = D.model_check;
+    if (!mc) return [];
+    const days = mc.days || [mc.date];
+    return mc.nights.filter((n) => (n.date || mc.date) === days[Math.min(checkDay, days.length - 1)]);
+  };
+  const checkNight = () => checkNights()[checkSpot] || null;
 
   function renderCheck() {
     const mc = D.model_check;
     const body = $('#check-body');
     if (!mc || !mc.nights.length) { body.innerHTML = '<div class="empty">Model check data will appear after the next update.</div>'; return; }
+    const days = mc.days || [mc.date];
+    const tabName = (i) => ['Tonight', 'Tomorrow', 'Day after'][i] || dayLabel(days[i]);
     const nowRow = (n) => n.hourly.reduce((b, h) => (Math.abs(new Date(h.t) - Date.now()) < Math.abs(new Date(b.t) - Date.now()) ? h : b));
     body.innerHTML = `
       <p class="hint" style="margin-top:0">${esc(mc.note)} Compare with Norway Lights or yr.no, or just look outside.</p>
+      <div class="daytabs">${days.map((d, i) => `<button class="btn ${i === checkDay ? 'on' : ''}" data-day="${i}">${tabName(i)} <span class="why">${shortDay(d)}</span></button>`).join('')}</div>
       <div class="tbl-wrap"><table>
-        <tr><th>Tonight (${dayLabel(mc.date)})</th><th>Chance</th><th>Best window</th><th>MET cloud now*</th></tr>
-        ${mc.nights.map((n, i) => {
+        <tr><th>${dayLabel(days[checkDay])}</th><th>Chance</th><th>Best window</th><th>${checkDay === 0 ? 'MET cloud now*' : 'Cloud source'}</th></tr>
+        ${checkNights().map((n, i) => {
           const w = bestWindow(n);
-          const r = nowRow(n);
-          return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : 'none'}</td><td>${r.cloud_met != null ? Math.round(r.cloud_met) + '%' : '–'}</td></tr>`;
+          const last = checkDay === 0 ? (nowRow(n).cloud_met != null ? Math.round(nowRow(n).cloud_met) + '%' : '–') : esc(n.clear.source);
+          return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : 'none'}</td><td>${last}</td></tr>`;
         }).join('')}
       </table></div>
-      <p class="hint">Tap a row to switch. *At the last update (${ago(D.generated)}); live Kp is in the Live section. Sources last run: ${Object.entries(D.sources).map(([k, v]) => `${esc(k)} ${v.ok ? '✓' : '✕'}`).join(' · ')}</p>
+      <p class="hint">Tap a row to switch spot. ${checkDay === 0 ? `*At the last update (${ago(D.generated)}); live Kp is in the Live section. ` : ''}Sources last run: ${Object.entries(D.sources).map(([k, v]) => `${esc(k)} ${v.ok ? '✓' : '✕'}`).join(' · ')}</p>
       <div id="check-detail" style="border-top:1px solid var(--border);padding-top:12px"></div>
       ${verificationTable()}`;
     body.querySelectorAll('tr.pick').forEach((tr) => tr.addEventListener('click', () => { checkSpot = +tr.dataset.i; renderCheck(); }));
+    body.querySelectorAll('.daytabs button').forEach((b) => b.addEventListener('click', () => { checkDay = +b.dataset.day; renderCheck(); }));
     $('#check-detail').innerHTML = detailHTML(checkNight(), 'check-chart');
     drawHourly(checkNight(), $('#check-chart'));
   }
@@ -873,6 +925,116 @@
       tr.classList.toggle('today', tr.dataset.d === today);
       tr.classList.toggle('past', tr.dataset.d < today);
     });
+  }
+
+  // ------------------------------------------------------------ itinerary status line ("Now: …")
+  // Local time: England UTC+1, Norway UTC+2 (both summer time until 25 Oct).
+  const tzOff = (lat) => (lat < 55 ? 1 : 2);
+  const localHm = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); };
+  const localDay = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return `${DOW[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
+  const inTime = (t) => {
+    const m = Math.round((new Date(t) - Date.now()) / 60000);
+    if (m < 60) return `in ${m} min`;
+    if (m < 48 * 60) return `in ${Math.round(m / 60)} h`;
+    return `in ${Math.round(m / 1440)} days`;
+  };
+
+  function renderItinNow() {
+    const el = $('#itin-now');
+    if (!el) return;
+    const now = Date.now();
+    const stops = D.trip.stops;
+    const start = new Date(D.trip.start).getTime(), end = new Date(D.trip.end).getTime();
+    let html;
+    if (now < start) {
+      const s = stops[0];
+      html = `<b>Not sailing yet.</b> Departure from ${esc(s.name)} ${localDay(s.depart, s.lat)} ${localHm(s.depart, s.lat)} (${inTime(s.depart)}).`;
+    } else if (now > end) {
+      html = '<b>Cruise completed.</b> Welcome home!';
+    } else {
+      const port = stops.find((s) => s.arrive && s.depart && now >= new Date(s.arrive) && now <= new Date(s.depart));
+      if (port) {
+        html = `<b>Now: in ${esc(port.name)}.</b> Departs ${localDay(port.depart, port.lat)} ${localHm(port.depart, port.lat)} (${inTime(port.depart)}).`;
+      } else {
+        const next = stops.find((s) => s.arrive && new Date(s.arrive) > now);
+        html = next ? `<b>Now: at sea</b> → ${esc(next.name)}, arriving ${localDay(next.arrive, next.lat)} ${localHm(next.arrive, next.lat)} (${inTime(next.arrive)}).` : '<b>Now: at sea.</b>';
+      }
+    }
+    el.innerHTML = `<span class="dot"></span>${html} <span class="why">From the published schedule, not live tracking.</span>`;
+  }
+
+  // ------------------------------------------------------------ weather in port
+  let wxPort = null;
+  const WX_ICON = (sym) => (sym ? `<img class="wxi" src="https://cdn.jsdelivr.net/gh/metno/weathericons@main/weather/svg/${encodeURIComponent(sym)}.svg" alt="${esc(sym.replace(/_/g, ' '))}" loading="lazy">` : '');
+  const r1 = (v) => (v == null ? '–' : (Math.round(v * 10) / 10).toString());
+  const r0 = (v) => (v == null ? '–' : Math.round(v).toString());
+  const LEVEL_CLS = (lvl) => (/red/.test(lvl || '') ? 'critical' : /orange/.test(lvl || '') ? 'serious' : 'warn');
+
+  function wxRows(series, lat, compact) {
+    return series.map((e) => {
+      const gCls = e.gust >= 20 ? 'wx-red' : e.gust >= 15 ? 'wx-orange' : '';
+      const fCls = e.feels != null && e.feels <= 0 ? 'wx-cold' : '';
+      const pCls = (e.pr || 0) >= 0.5 ? 'wx-wet' : '';
+      const snow = /snow|sleet/.test(e.sym || '') ? ' <span class="wx-snow">snow/sleet</span>' : '';
+      const arrow = e.dir != null ? `<span class="warr" style="transform:rotate(${Math.round(e.dir + 180)}deg)">↑</span>` : '';
+      const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}`;
+      return `<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
+        <td class="${gCls}">${arrow}${r0(e.wind)}${e.gust != null ? `<span class="why"> (${r0(e.gust)})</span>` : ''}</td>
+        <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null && !compact ? `<span class="why"> ${r0(e.pp)}%</span>` : ''}</td></tr>`;
+    }).join('');
+  }
+  const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
+    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind</th><th>Rain</th></tr>${wxRows(series, lat, compact)}</table></div>
+    <div class="why" style="margin-top:2px">Wind in m/s, gust in brackets · rain in mm${compact ? '' : ', chance in %'}</div>`;
+  const wxSummaryLine = (s) => (s ? `${r0(s.t_min)}–${r0(s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${r0(s.gust_max)} m/s · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
+  const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
+
+  function renderWeather() {
+    const tabs = $('#wx-tabs'), box = $('#wx-port');
+    if (!WX || !WX.ports) { box.innerHTML = '<div class="empty">Weather data will appear after the next update.</div>'; return; }
+    // Warnings
+    const al = WX.alerts || [];
+    const sailing = Date.now() >= new Date(D.trip.start) && Date.now() <= new Date(D.trip.end);
+    $('#wx-alerts').innerHTML = al.length ? `<details class="panel wx-alerts" ${sailing && al.some((a) => a.places.some((p) => p !== 'Ship route')) ? 'open' : ''}>
+      <summary><b>${al.length} official MET Norway warning${al.length > 1 ? 's' : ''}</b> near the ports or the route right now</summary>
+      ${al.map((a) => `<div class="walert ${LEVEL_CLS(a.level)}"><b>${esc(a.event || a.title)}</b> · ${esc(a.area || '')}
+        <div class="why">${a.from ? `${localDay(a.from, 65)} ${localHm(a.from, 65)}` : ''}–${a.to ? `${localDay(a.to, 65)} ${localHm(a.to, 65)}` : ''} · affects: ${esc(a.places.join(', '))}</div>
+        ${a.description ? `<div class="why">${esc(a.description)}</div>` : ''}</div>`).join('')}
+      <p class="hint">Before the cruise these are today's warnings along the route, useful to learn how often it happens. During the cruise they matter for the ship and port days.</p></details>` : '';
+    // Port tabs
+    if (!wxPort) {
+      const upcoming = WX.ports.find((p) => new Date(p.window[1]) > Date.now());
+      wxPort = (upcoming || WX.ports[0]).id;
+    }
+    tabs.innerHTML = WX.ports.map((p) => `<button class="btn ${p.id === wxPort ? 'on' : ''}" data-p="${p.id}">${esc(p.name.replace(' (departure)', '').replace(' (arrival)', ''))} <span class="why">${shortDay(p.window[0].slice(0, 10))}</span></button>`).join('');
+    tabs.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { wxPort = b.dataset.p; renderWeather(); }));
+    const p = WX.ports.find((x) => x.id === wxPort);
+    const lat = p.id.startsWith('SOU') ? 50.9 : 65;
+    const win = `${localDay(p.window[0], lat)} ${localHm(p.window[0], lat)}–${localHm(p.window[1], lat)}`;
+    const c = p.climate;
+    const portDay = p.series.length
+      ? `<div class="wx-sum">${wxSummaryLine(p.summary)}</div>${adviceChips(p.advice)}${wxTable(p.series, lat)}`
+      : `<div class="wx-sum">No forecast for this day yet: MET Norway reaches it about 9 days before (6-hourly), hourly from about 2.5 days before.</div>
+         ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0(c.temp_min_mean)}–${r0(c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${r1(c.wind_mean)} m/s, gusts up to ~${r0(c.gust_p90)}</div></div>
+         <div class="fb"><div class="k">Rain or snow</div><div class="v">${Math.round(c.wet_hours_share * 100)}% of hours</div><div class="s">${c.snow_share_of_wet > 0.05 ? `${Math.round(c.snow_share_of_wet * 100)}% of those as snow/sleet` : 'almost always rain, not snow'}</div></div></div>` : ''}`;
+    const sea = p.sea ? `<div class="wx-sea"><b>Water shuttle (tender), ${esc(p.sea.label)}:</b> ${p.sea.wave_max != null ? `waves up to ${r1(p.sea.wave_max)} m · sea ${r1(p.sea.sst)} °C · ${esc(p.sea.risk)}` : 'sea forecast not available for this day yet (about 8 days ahead)'}</div>` : '';
+    const now = p.now_series && p.now_series.length ? `<details class="wx-now"><summary><b>Right now at ${esc(p.name.replace(/ \((departure|arrival)\)/, ''))}:</b> next 48 hours · ${wxSummaryLine(p.now_summary)}</summary>
+        ${adviceChips(p.now_advice)}${wxTable(p.now_series.filter((_, i) => i % 2 === 0), lat, true)}<p class="hint">Every 2nd hour shown. This is the weather there now, not on your port day.</p></details>` : '';
+    const spots = (p.spots || []).map((s) => {
+      const has = s.series && s.series.length;
+      const summ = has ? s.summary : s.now_summary;
+      const adv = has ? s.advice : s.now_advice;
+      const vw = has ? s.view : s.now_view;
+      const label = has ? 'On your port day' : 'Right now (next 36 h)';
+      return `<details class="spot"><summary><b>${esc(s.name)}</b> <span class="why">${s.ele} m · ${s.kind}</span><br>
+          <span class="why">${label}:</span> ${wxSummaryLine(summ)}${vw ? ` · <i>${esc(vw)}</i>` : ''}</summary>
+          ${adviceChips(adv)}${wxTable((has ? s.series : (s.now_series || []).filter((_, i) => i % 3 === 0)), lat, true)}</details>`;
+    }).join('');
+    box.innerHTML = `
+      <h3 style="margin:0 0 4px">${esc(p.name)} <span class="why">· in port ${win}</span></h3>
+      ${portDay}${sea}${now}
+      ${spots ? `<h3 style="margin-top:16px">Hikes and viewpoints <span class="why">(forecast at the summit's altitude)</span></h3>${spots}` : ''}
+      <p class="hint">Colours: <span class="wx-cold">feels ≤0 °C</span> · <span class="wx-orange">gusts ≥15 m/s</span> · <span class="wx-red">gusts ≥20 m/s</span> · <span class="wx-wet">rain ≥0.5 mm/h</span>. Arrow = where the wind blows to. Times are local.</p>`;
   }
 
   // ------------------------------------------------------------ nav highlight
@@ -892,8 +1054,9 @@
   async function boot() {
     try {
       let hpFile;
-      [D, HIST, VER, hpFile] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
-        getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null)]);
+      [D, HIST, VER, hpFile, WX] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
+        getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
+        getJSON('data/weather.json').catch(() => null)]);
       const a = (D.space_weather && D.space_weather.hp30) || [];
       const b = (hpFile && hpFile.series) || [];
       HP30 = (b.length && (!a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : a;
@@ -906,7 +1069,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, markItineraryToday, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {

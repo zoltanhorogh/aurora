@@ -1,0 +1,95 @@
+{
+ "generated": "2026-09-27T14:07:03Z",
+ "source": "ERA5 reanalysis via Open-Meteo archive, daytime 08–20 local",
+ "years": [
+  2011,
+  2025
+ ],
+ "window_days": 7,
+ "ports": {
+  "SOU": {
+   "name": "Southampton (departure)",
+   "date": "2026-10-10",
+   "temp_mean": 13.9,
+   "temp_max_mean": 15.9,
+   "temp_min_mean": 10.6,
+   "feels_mean": 11.8,
+   "wind_mean": 4.4,
+   "gust_p90": 14.3,
+   "wet_hours_share": 0.19,
+   "snow_share_of_wet": 0.0
+  },
+  "TRD": {
+   "name": "Trondheim",
+   "date": "2026-10-13",
+   "temp_mean": 8.0,
+   "temp_max_mean": 9.8,
+   "temp_min_mean": 5.3,
+   "feels_mean": 5.6,
+   "wind_mean": 2.4,
+   "gust_p90": 11.4,
+   "wet_hours_share": 0.36,
+   "snow_share_of_wet": 0.05
+  },
+  "TOS": {
+   "name": "Tromsø",
+   "date": "2026-10-15",
+   "temp_mean": 5.0,
+   "temp_max_mean": 6.2,
+   "temp_min_mean": 3.4,
+   "feels_mean": 2.0,
+   "wind_mean": 2.4,
+   "gust_p90": 13.6,
+   "wet_hours_share": 0.42,
+   "snow_share_of_wet": 0.31
+  },
+  "ALT": {
+   "name": "Alta",
+   "date": "2026-10-16",
+   "temp_mean": 2.7,
+   "temp_max_mean": 3.9,
+   "temp_min_mean": 0.9,
+   "feels_mean": -0.5,
+   "wind_mean": 2.4,
+   "gust_p90": 11.1,
+   "wet_hours_share": 0.27,
+   "snow_share_of_wet": 0.51
+  },
+  "MOL": {
+   "name": "Molde",
+   "date": "2026-10-20",
+   "temp_mean": 8.4,
+   "temp_max_mean": 9.9,
+   "temp_min_mean": 6.4,
+   "feels_mean": 5.9,
+   "wind_mean": 2.6,
+   "gust_p90": 14.5,
+   "wet_hours_share": 0.35,
+   "snow_share_of_wet": 0.14
+  },
+  "AES": {
+   "name": "Ålesund",
+   "date": "2026-10-21",
+   "temp_mean": 7.7,
+   "temp_max_mean": 8.6,
+   "temp_min_mean": 6.5,
+   "feels_mean": 3.8,
+   "wind_mean": 4.9,
+   "gust_p90": 14.7,
+   "wet_hours_share": 0.41,
+   "snow_share_of_wet": 0.07
+  },
+  "SOU2": {
+   "name": "Southampton (arrival)",
+   "date": "2026-10-24",
+   "temp_mean": 13.0,
+   "temp_max_mean": 14.8,
+   "temp_min_mean": 10.4,
+   "feels_mean": 10.7,
+   "wind_mean": 4.8,
+   "gust_p90": 15.0,
+   "wet_hours_share": 0.22,
+   "snow_share_of_wet": 0.0
+  }
+ }
+}

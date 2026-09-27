@@ -23,6 +23,9 @@ jobs:
           python-version: "3.12"
       - name: Build forecast
         run: python scripts/update.py
+      - name: Port and hiking weather (MET Norway)
+        continue-on-error: true   # weather must never block the aurora data commit
+        run: python scripts/weather.py
       - name: Notifications (morning digest + change alerts)
         continue-on-error: true   # a notification hiccup must never block the data commit
         env:
@@ -33,6 +36,7 @@ jobs:
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/latest.json data/history.json data/verification.json
+          git add data/weather.json 2>/dev/null || true
           git add data/notify_state.json 2>/dev/null || true
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "Forecast update $(date -u +'%Y-%m-%d %H:%M') UTC"

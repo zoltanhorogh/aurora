@@ -461,18 +461,23 @@ CHECK_SPOTS = [  # name, lat, lon, town-light factor, cruise night whose October
 ]
 
 
+CHECK_DAYS = 3  # tonight, tomorrow, the day after (MET Norway reaches ~2.5 days ahead)
+
+
 def model_check(now, kp3_map, kp27_map, daily, cmes, clim):
-    """Tonight's forecast for Tromsø and Alta with exactly the cruise model, to compare with other apps."""
+    """The next CHECK_DAYS nights for Tromsø and Alta with exactly the cruise model, to compare with other apps."""
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
-    d = (local - timedelta(days=1) if local.hour < 6 else local).date()
+    d0 = (local - timedelta(days=1) if local.hour < 6 else local).date()
+    days = [d0 + timedelta(days=k) for k in range(CHECK_DAYS)]
     nights = []
-    for name, lat, lon, light, clim_night in CHECK_SPOTS:
-        n = score_night(d, FixedRoute(name, lat, lon, light), now, kp3_map, kp27_map, daily, cmes,
-                        {d.isoformat(): clim.get(clim_night, {})})
-        n["spot"] = name
-        nights.append(n)
-    return {"date": d.isoformat(), "nights": nights,
-            "note": "Tonight at a fixed spot, same model and code as the cruise nights. "
+    for d in days:
+        for name, lat, lon, light, clim_night in CHECK_SPOTS:
+            n = score_night(d, FixedRoute(name, lat, lon, light), now, kp3_map, kp27_map, daily, cmes,
+                            {d.isoformat(): clim.get(clim_night, {})})
+            n["spot"] = name
+            nights.append(n)
+    return {"date": d0.isoformat(), "days": [d.isoformat() for d in days], "nights": nights,
+            "note": "Fixed spots, same model and code as the cruise nights. "
                     "Background climate: October at the same place."}
 
 
@@ -501,11 +506,15 @@ def update_verification(now, mc):
     ver = load_json(DATA / "verification.json", {"nights": {}}) or {"nights": {}}
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
 
-    # 1) Evening forecast snapshot: the last run before 20:00 local on the night's own date.
-    if local.date().isoformat() == mc["date"] and local.hour < 20:
+    # 1) Forecast snapshots: the last run before 20:00 local, for tonight ("forecast"), tomorrow night
+    #    ("forecast_1d") and the night after ("forecast_2d"), so accuracy can be compared by lead time.
+    if local.hour < 20:
         for n in mc["nights"]:
-            rec = ver["nights"].setdefault(f"{mc['date']}|{n['spot']}", {"date": mc["date"], "spot": n["spot"]})
-            rec["forecast"] = {
+            lead = (datetime.fromisoformat(n["date"]).date() - local.date()).days
+            if lead not in (0, 1, 2):
+                continue
+            rec = ver["nights"].setdefault(f"{n['date']}|{n['spot']}", {"date": n["date"], "spot": n["spot"]})
+            rec["forecast" if lead == 0 else f"forecast_{lead}d"] = {
                 "issued": iso(now), "score": n["score"], "rating": n["rating"], "source": n["clear"]["source"],
                 "hours": [[h["local"], hour_verdict(h), h["cloud_met"]] for h in n["hourly"] if h["sun"] < -3],
             }

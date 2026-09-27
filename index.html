@@ -34,6 +34,7 @@
       <a href="#space">Space weather</a>
       <a href="#live">Live</a>
       <a href="#itinerary">Itinerary</a>
+      <a href="#weather">Weather</a>
       <a href="#map-sec">Map</a>
       <a href="#guide">Guide</a>
     </nav>
@@ -74,11 +75,16 @@
       <div class="panel" id="bz-panel"></div>
       <div class="panel ovation" id="ovation-panel"></div>
     </div>
+    <details class="panel" style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--text-2)">Aurora overhead right now along the route</summary>
+      <div id="route-ov-body" style="margin-top:10px"><div class="empty">Loading…</div></div>
+    </details>
   </section>
 
   <section id="itinerary">
     <h2>Itinerary</h2>
     <div class="panel">
+      <div class="itin-now" id="itin-now"></div>
       <div class="tbl-wrap"><table class="itin">
         <tr><th>Oct</th><th>Port</th><th>Arrive</th><th>Depart</th></tr>
         <tr data-d="2026-10-10"><td class="d">Sat 10</td><td>Southampton, England</td><td>–</td><td>16:00</td></tr>
@@ -99,6 +105,14 @@
       </table></div>
       <p class="hint">Times are local, as published by Princess. Norway uses the same time as Budapest (CEST); England is one hour behind. The ship changes its clocks on the way to Norway and back; the exact nights are announced on board (Princess Patter). Daylight saving time ends on 25 Oct, after the cruise.</p>
     </div>
+  </section>
+
+  <section id="weather">
+    <h2>Weather in port</h2>
+    <div id="wx-alerts"></div>
+    <div class="daytabs" id="wx-tabs"></div>
+    <div class="panel" id="wx-port"><div class="empty">Loading…</div></div>
+    <p class="hint">Forecasts: MET Norway (the institute behind yr.no), its 2.5 km local model for Norway: hourly for about 2.5 days, then 6-hourly up to about 9 days. Hikes and viewpoints use the forecast for their own altitude. Typical weather: ERA5 reanalysis 2011–2025, daytime 08–20.</p>
   </section>
 
   <section id="map-sec">

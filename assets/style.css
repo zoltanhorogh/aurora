@@ -208,7 +208,34 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .fb .s { font-size: 11px; color: var(--text-2); }
 .mettag { font-size: 9px; letter-spacing: .08em; color: #9ec5f4; border: 1px solid #3987e5; border-radius: 4px; padding: 0 4px; }
 .hr .cb { min-width: 0; }
-.versum { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 10px; }
+/* itinerary status + weather */
+.itin-now { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--text-2); margin-bottom: 10px; flex-wrap: wrap; }
+.itin-now b { color: var(--text); }
+.wxi { width: 26px; height: 26px; vertical-align: middle; }
+table.wx td, table.wx th { padding: 4px 4px; }
+table.wx .wxi { width: 24px; height: 24px; }
+table.wx td:nth-child(2) { text-align: left; }
+.warr { display: inline-block; margin-right: 4px; color: var(--text-2); }
+.wx-cold { color: #86b6ef; font-weight: 600; }
+.wx-orange { color: var(--serious); font-weight: 600; }
+.wx-red { color: var(--critical); font-weight: 700; }
+.wx-wet { color: #9ec5f4; }
+.wx-snow { font-size: 10px; color: #dfe6ff; border: 1px solid #5a6b8a; border-radius: 4px; padding: 0 3px; }
+.wx-sum { font-size: 13px; color: var(--text-2); margin: 6px 0; }
+.wx-sea { font-size: 13px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 10px 0; }
+.wx-now, .spot { border-top: 1px solid var(--border); padding: 8px 0; }
+.wx-now summary, .spot summary { cursor: pointer; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.achip { font-size: 12px; color: var(--text); background: rgba(57, 135, 229, 0.14); border: 1px solid rgba(57, 135, 229, 0.4); border-radius: 999px; padding: 2px 9px; }
+.wx-alerts { margin-bottom: 12px; }
+.wx-alerts summary { cursor: pointer; color: var(--text-2); }
+.walert { border-left: 3px solid var(--warn); padding: 4px 10px; margin: 8px 0; font-size: 13px; border-radius: 0; }
+.walert.serious { border-left-color: var(--serious); }
+.walert.critical { border-left-color: var(--critical); }
+.daytabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.daytabs .btn { padding: 5px 10px; font-size: 13px; }
+.daytabs .btn.on { border-color: var(--aurora); background: rgba(62, 224, 143, 0.10); }
+.versum { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 6px 0 10px; }
 .versum > div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
 .versum b { display: block; font-size: 20px; }
 .versum span { font-size: 11px; color: var(--text-2); }
