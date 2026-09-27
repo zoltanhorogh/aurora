@@ -1003,7 +1003,8 @@
       const lat = leg.points.length ? leg.points[Math.floor(leg.points.length / 2)].lat : 65;
       const head = pts.length
         ? `waves up to <b>${r1(leg.wave_max)} m</b> · ${cmf(leg.comfort)}${leg.covered < 1 ? ` <span class="why">(forecast covers ${Math.round(leg.covered * 100)}% of the leg so far)</span>` : ''}`
-        : (c ? `<span class="why">no forecast yet · typical October:</span> ${r1(c.wave_mean)} m on average` : '<span class="why">no forecast yet</span>');
+        : (c ? `<span class="why">no forecast yet · typical October:</span> ${r1(c.wave_mean)} m on average` : '<span class="why">no forecast yet</span>')
+          + (leg.now && leg.now.wave_max != null ? ` <span class="why">· now:</span> ${r1(leg.now.wave_max)} m ${cmf(leg.now.comfort)}` : '');
       const body = pts.length
         ? `<div class="tbl-wrap"><table class="wx"><tr><th>Time</th><th>Waves</th><th>Period</th><th>Wind</th><th>Feel</th></tr>
             ${pts.map((p) => `<tr><td>${dayHm(p.t, p.lat)}</td><td>${r1(p.wave)} m</td><td>${r0(p.period)} s</td>
@@ -1012,7 +1013,13 @@
         : (c ? `<div class="farbox"><div class="fb"><div class="k">Typical October on this leg (${esc(String(2011))}–2025)</div><div class="v">${r1(c.wave_mean)} m</div><div class="s">average wave height · 1 in 10 hours above ${r1(c.wave_p90)} m</div></div>
             <div class="fb"><div class="k">Rough or worse</div><div class="v">${Math.round(c.share_over_2_5 * 100)}% of hours</div><div class="s">waves over 2.5 m · over 4 m: ${Math.round(c.share_over_4 * 100)}%</div></div></div>
             <div class="why" style="margin-top:6px">The wave forecast reaches about 10 days ahead; after that this switches to an hour-by-hour table.</div>` : '');
-      return `<details class="spot" ${pts.length ? 'open' : ''}><summary><b>${esc(leg.label)}</b> <span class="why">${localDay(leg.start, lat)} – ${localDay(leg.end, lat)}</span><br>${head}</summary>${body}</details>`;
+      const n = leg.now;
+      const nowPart = n && n.series && n.series.length ? `<details class="wx-now"><summary><b>Right now mid-route</b> <span class="why">(${r1(n.lat)}°N ${r1(n.lon)}°E)</span>: next 48 hours · waves up to ${r1(n.wave_max)} m · ${cmf(n.comfort)}</summary>
+          <div class="tbl-wrap"><table class="wx"><tr><th>Time</th><th>Waves</th><th>Period</th><th>Wind</th><th>Feel</th></tr>
+          ${n.series.map((p) => `<tr><td>${dayHm(p.t, p.lat)}</td><td>${r1(p.wave)} m</td><td>${r0(p.period)} s</td>
+            <td class="${p.gust >= 20 ? 'wx-red' : p.gust >= 15 ? 'wx-orange' : ''}">${kmh(p.wind)}<span class="why"> (${kmh(p.gust)})</span></td><td>${cmf(p.comfort)}</td></tr>`).join('')}</table></div>
+          <div class="why">The sea there now, not on your crossing date · every 3 hours</div></details>` : '';
+      return `<details class="spot" ${pts.length ? 'open' : ''}><summary><b>${esc(leg.label)}</b> <span class="why">${localDay(leg.start, lat)} – ${localDay(leg.end, lat)}</span><br>${head}</summary>${body}${nowPart}</details>`;
     }).join('');
     return `<h3 style="margin:0 0 4px">At sea <span class="why">· waves along the route</span></h3>
       <p class="hint" style="margin-top:0">How much the sea will move the ship on each crossing. Just look at <b>Feel</b>; waves = typical height of the bigger waves, period = seconds between two waves.</p>

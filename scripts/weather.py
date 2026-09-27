@@ -176,6 +176,39 @@ def sea_legs_forecast(it, route, shift=timedelta(0)):
         p["wind"] = w["hourly"]["wind_speed_10m"][wi] if wi is not None else None
         p["gust"] = w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None
         p["comfort"] = comfort(p["wave"], p["period"])
+    # "Right now": next 48 h at the middle of each leg, whatever the cruise date.
+    mids = []
+    for a, b in zip(stops, stops[1:]):
+        s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
+        p = route.at(s + (e - s) / 2)
+        mids.append((round(p["lat"], 2), round(p["lon"], 2)))
+    mlats = ",".join(str(m[0]) for m in mids)
+    mlons = ",".join(str(m[1]) for m in mids)
+    nm = http_get_json("https://marine-api.open-meteo.com/v1/marine"
+                       f"?latitude={mlats}&longitude={mlons}&hourly=wave_height,wave_period&forecast_days=3&timezone=GMT")
+    nw = http_get_json("https://api.open-meteo.com/v1/forecast"
+                       f"?latitude={mlats}&longitude={mlons}&hourly=wind_speed_10m,wind_gusts_10m&wind_speed_unit=ms"
+                       "&forecast_days=3&timezone=GMT")
+    nm = nm if isinstance(nm, list) else [nm]
+    nw = nw if isinstance(nw, list) else [nw]
+    now = utcnow()
+    for leg, (lat, lon), m, w in zip(legs, mids, nm, nw):
+        rows = []
+        for i, t in enumerate(m["hourly"]["time"]):
+            tt = parse_utc(t + ":00Z")
+            if tt < now - timedelta(hours=1) or tt > now + timedelta(hours=48) or tt.hour % 3:
+                continue
+            wi = w["hourly"]["time"].index(t) if t in w["hourly"]["time"] else None
+            wave, period = m["hourly"]["wave_height"][i], m["hourly"]["wave_period"][i]
+            rows.append({"t": iso(tt), "lat": lat, "wave": wave, "period": period,
+                         "wind": w["hourly"]["wind_speed_10m"][wi] if wi is not None else None,
+                         "gust": w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None,
+                         "comfort": comfort(wave, period)})
+        feels = [COMFORT.index(r["comfort"]) for r in rows if r["comfort"]]
+        waves = [r["wave"] for r in rows if r["wave"] is not None]
+        leg["now"] = {"lat": lat, "lon": lon, "series": rows, "wave_max": max(waves) if waves else None,
+                      "comfort": COMFORT[max(feels)] if feels else None}
+
     climate = {c["label"]: c for c in (load_json(DATA / "sea_climate.json", {}) or {}).get("legs", [])}
     for leg in legs:
         waves = [p["wave"] for p in leg["points"] if p["wave"] is not None]
