@@ -182,7 +182,10 @@ th { color: var(--muted); font-weight: 600; }
 /* ---------- map ---------- */
 #map { height: 420px; border-radius: var(--radius); border: 1px solid var(--border); background: #111; }
 @media (max-width: 560px) { #map { height: 360px; } }
-.leaflet-container { font: inherit; }
+.leaflet-container { font: inherit; background: #0e1116; }
+.leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.35); }
+.leaflet-control-attribution { background: rgba(22, 23, 26, 0.8) !important; color: var(--muted); }
+.leaflet-control-attribution a { color: var(--text-2); }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #16171a; color: var(--text); }
 
 /* ---------- guide ---------- */

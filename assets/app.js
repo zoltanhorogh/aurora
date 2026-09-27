@@ -579,8 +579,9 @@
   function renderMap() {
     if (!window.L) { $('#map').innerHTML = '<div class="empty">Map library could not load (offline?).</div>'; return; }
     const map = L.map('map', { scrollWheelZoom: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 10, subdomains: 'abcd', attribution: '© OpenStreetMap contributors © CARTO',
+    // Standard OSM tiles (no key needed), darkened with a CSS filter on the tile pane.
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 10, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
     const pl = L.polyline(D.route_hourly.map((r) => [r[1], r[2]]), { color: '#9085e9', weight: 2, opacity: 0.8 }).addTo(map);
     const seen = new Set();
