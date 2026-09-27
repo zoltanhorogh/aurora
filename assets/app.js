@@ -122,7 +122,7 @@
       : `No weather model reaches this night yet. In past Octobers ${pct(c.p_clim)} of nights here had a clear gap`;
     const need = kpNeedText(n.kp_req);
     const rows = [
-      ['Activity', n.factors.activity, `${need[0].toUpperCase() + need.slice(1)} · expected Kp ≈${a.kp != null ? a.kp.toFixed(1) : '–'} (${esc(a.kp_src || '–')})`],
+      ['Activity', n.factors.activity, `${need[0].toUpperCase() + need.slice(1)} · forecast Kp ≈${a.kp != null ? a.kp.toFixed(1) : '–'} (${esc(a.kp_src || '–')})`],
       ['Clear sky', n.factors.clear, clearWhy],
       ['Darkness', n.factors.darkness, `Dark ${n.dark.start}–${n.dark.end} ship time (${n.dark.hours} h)`],
       ['Moon & lights', n.factors.moon_lights, `Moon ${Math.round(n.moon.illum * 100)}% lit, up ${pct(n.moon.up_frac_dark)} of the dark hours${n.state === 'port' ? ' · in port (town lights)' : ' · at sea (darkest skies)'}`],
@@ -246,12 +246,12 @@
           </div>
           <div class="chart" id="hourly-chart"></div>
           ${hasCloud ? '' : '<div class="hint">No weather model reaches this night yet, so there are no cloud bars. The clear-sky factor uses the October climate instead.</div>'}
-          <div class="hint">Times are ship time (UTC+2). Geomagnetic latitude ${n.mlat}°: ${kpNeedText(n.kp_req)}.</div>
+          <div class="hint">Times are ship time (UTC+2). <b>Kp forecast</b> = expected geomagnetic activity (0–9). <b>Kp needed</b> = the level at which aurora is clearly visible where the ship is at that hour (higher the further south). <b>Activity chance</b> = probability that the real Kp reaches the needed level, allowing for forecast error. At midnight: ${kpNeedText(n.kp_req)}.</div>
         </div>
       </div>
       ${formula(n)}
       <details class="table"><summary>Show hour-by-hour table</summary><div class="tbl-wrap"><table>
-        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Cloud</th><th>Kp exp.</th><th>Kp need</th><th>Activity</th><th>Moon</th></tr>
+        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Cloud</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
         ${hours.map((h) => `<tr><td>${h.local}</td><td>${esc(shortPlace(h.place)).slice(0, 26)}</td><td>${h.sun}°</td><td>${h.cloud_mean ?? '–'}${h.cloud_mean != null ? '%' : ''}</td><td>${h.kp.toFixed(1)}</td><td>${h.kp_req.toFixed(1)}</td><td>${pct(h.p_act)}</td><td>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '%' : 'down'}</td></tr>`).join('')}
       </table></div></details>`;
     drawHourly(n);
@@ -293,10 +293,11 @@
       return `<b>${h.local}</b> · ${esc(shortPlace(h.place))}
         <div class="row"><span>Sun</span><span>${h.sun}° ${h.dark ? '(dark)' : '(twilight/day)'}</span></div>
         <div class="row"><span>Cloud</span><span>${h.cloud_mean != null ? `${h.cloud_mean}% (${h.cloud_p10}–${h.cloud_p90})` : 'no forecast yet'}</span></div>
-        <div class="row"><span>Kp expected / needed</span><span>${h.kp.toFixed(1)} / ${h.kp_req.toFixed(1)}</span></div>
+        <div class="row"><span>Kp forecast</span><span>${h.kp.toFixed(1)}</span></div>
+        <div class="row"><span>Kp needed here</span><span>${h.kp_req.toFixed(1)}</span></div>
         <div class="row"><span>Activity chance</span><span>${pct(h.p_act)}</span></div>
         <div class="row"><span>Moon</span><span>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '% lit, up' : 'below horizon'}</span></div>
-        <div class="hint" style="margin-top:4px">Kp source: ${esc(h.kp_src)}</div>`;
+        <div class="hint" style="margin-top:4px">${h.kp >= h.kp_req ? 'Forecast activity is above what this spot needs.' : `Forecast is ${(h.kp_req - h.kp).toFixed(1)} short of what this spot needs; the chance comes from forecast uncertainty.`} Kp source: ${esc(h.kp_src)}</div>`;
     }, (i) => hlBand(hl, bands, i, mt, ph));
   }
 
