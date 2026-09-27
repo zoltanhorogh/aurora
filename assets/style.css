@@ -140,7 +140,19 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .tag-arctic { font-size: 9px; letter-spacing: .1em; color: #9085e9; border: 1px solid #4a3f96; border-radius: 4px; padding: 0 4px; width: max-content; }
 
 /* ---------- charts ---------- */
-.chart { position: relative; width: 100%; }
+.chart { position: relative; width: 100%; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.chart svg { touch-action: pan-y; }
+.st { display: inline-block; min-width: 40px; text-align: center; font-weight: 700; font-size: 11px; letter-spacing: .06em; border-radius: 6px; padding: 1px 6px; border: 1px solid; }
+.st.go { color: var(--good); border-color: var(--good); background: rgba(12, 163, 12, 0.14); }
+.st.try { color: var(--warn); border-color: var(--warn); }
+.st.no { color: var(--muted); border-color: var(--axis); }
+.st.unk { color: var(--text-2); border-color: var(--axis); border-style: dashed; }
+table.hours td:nth-child(2), table.hours th:nth-child(2) { text-align: left; }
+table.hours th, table.hours td { padding: 6px 6px; vertical-align: top; }
+table.hours .why { color: var(--muted); font-size: 11px; font-weight: 400; }
+table.hours .why.block { display: block; line-height: 1.2; margin-top: 2px; }
+table.hours tr.dim .why.block { margin-top: 0; }
+table.hours tr.dim td { color: var(--muted); }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
 .chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .chart .lbl { fill: var(--text-2); }

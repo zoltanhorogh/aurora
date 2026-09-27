@@ -16,6 +16,7 @@ P_ACT_CAP = 0.9              # even inside the oval, a display is never certain
 MOON_PENALTY = 0.35          # full moon high in the sky washes out faint aurora
 RATINGS = [(0.40, "GOOD"), (0.25, "FAIR"), (0.10, "LOW"), (0.0, "POOR")]
 MAX_HISTORY_RUNS = 400
+MET_MAX_LEAD = 2.6           # days; MET Norway's hourly high-resolution part reaches ~60 h
 
 MONTHS = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
@@ -159,6 +160,29 @@ def fetch_ensemble(points, d):
     return out
 
 
+@source("met_norway")
+def fetch_met(lat, lon):
+    """MET Norway locationforecast: hourly cloud cover for the high-resolution (~60 h) part only."""
+    js = http_get_json(f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2f}&lon={lon:.2f}")
+    ts = js["properties"]["timeseries"]
+    out = {}
+    for a, b in zip(ts, ts[1:]):
+        ta, tb = parse_utc(a["time"]), parse_utc(b["time"])
+        if tb - ta != timedelta(hours=1):
+            break  # beyond this point the series is 6-hourly global-model data
+        out[iso(ta)] = a["data"]["instant"]["details"].get("cloud_area_fraction")
+    return out
+
+
+def met_weight(lead_days):
+    """Weight of the high-resolution MET Norway model in the clear-sky chance."""
+    if lead_days <= 1:
+        return 0.5
+    if lead_days <= 2:
+        return 0.3
+    return 0.15
+
+
 def ens_weight(lead_days):
     """How much to trust the ensemble vs. climatology at a given lead time."""
     if lead_days <= 4:
@@ -238,6 +262,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
         if key not in uniq:
             uniq.append(key)
     ens = fetch_ensemble(uniq, d) if lead <= 34 else None
+    met = [fetch_met(*p) or {} for p in uniq] if lead <= MET_MAX_LEAD else None
 
     rows = []
     for h in hours:
@@ -263,6 +288,8 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             "cloud_mean": round(sum(vals) / len(vals), 1) if vals else None,
             "cloud_p10": round(percentile(vals, 0.1), 1) if vals else None,
             "cloud_p90": round(percentile(vals, 0.9), 1) if vals else None,
+            "cloud_met": (round(met[idx][iso(h)], 1) if met and idx < len(met)
+                          and met[idx].get(iso(h)) is not None else None),
             "_members": members,
         })
 
@@ -286,6 +313,22 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     models = sorted({"ECMWF" if "ecmwf" in k else "GFS" for k in member_keys})
     w = ens_weight(lead) if p_ens is not None else 0.0
     p_clear = w * (p_ens or 0) + (1 - w) * p_clim
+
+    # High-resolution MET Norway run (only the last ~2.5 days): a single deterministic
+    # forecast, so it gets a vote rather than the final word.
+    p_met = w_met = met_note = None
+    met_vals = [r["cloud_met"] for r in dark]
+    if dark and sum(v is not None for v in met_vals) >= 0.8 * len(dark):
+        start = next((dark[i]["local"] for i in range(len(dark) - 1)
+                      if all(v is not None and v <= CLEAR_MAX for v in met_vals[i:i + 2])), None)
+        if start:
+            p_met, met_note = 0.9, f"clear gap from {start}"
+        elif clear_window(met_vals, limit=70):
+            p_met, met_note = 0.35, "only partly clear"
+        else:
+            p_met, met_note = 0.05, "no clear gap"
+        w_met = met_weight(lead)
+        p_clear = w_met * p_met + (1 - w_met) * p_clear
 
     best = max(dark, key=lambda r: r["p_act"]) if dark else None
     p_act = best["p_act"] if best else 0.0
@@ -339,6 +382,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
                      "kp_src": best["kp_src"] if best else None, "best_local": best["local"] if best else None},
         "clear": {"p": round(p_clear, 3), "p_ens": round(p_ens, 3) if p_ens is not None else None,
                   "p_clim": round(p_clim, 3), "weight": round(w, 2), "members": n_ok, "models": models,
+                  "p_met": p_met, "w_met": w_met, "met_note": met_note,
                   "mean_cloud_dark": round(sum(dark_cloud) / len(dark_cloud), 1) if dark_cloud else None,
                   "clim_mean_cloud": c.get("mean_cloud")},
         "factors": {"activity": round(p_act, 3), "clear": round(p_clear, 3),

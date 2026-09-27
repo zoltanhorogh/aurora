@@ -117,9 +117,10 @@
 
   function factorRows(n) {
     const c = n.clear, a = n.activity;
-    const clearWhy = c.p_ens != null
+    const metWhy = c.p_met != null ? `MET Norway (2.5 km): ${esc(c.met_note)}, weight ${pct(c.w_met)} · ` : '';
+    const clearWhy = metWhy + (c.p_ens != null
       ? `Weather models: ${pct(c.p_ens)} of ${c.members} runs (${c.models.join(' + ')}) show a clear gap · October climate: ${pct(c.p_clim)} · model weight ${pct(c.weight)}`
-      : `No weather model reaches this night yet. In past Octobers ${pct(c.p_clim)} of nights here had a clear gap`;
+      : `No weather model reaches this night yet. In past Octobers ${pct(c.p_clim)} of nights here had a clear gap`);
     const need = kpNeedText(n.kp_req);
     const rows = [
       ['Activity', n.factors.activity, `${need[0].toUpperCase() + need.slice(1)} · forecast Kp ≈${a.kp != null ? a.kp.toFixed(1) : '–'} (${esc(a.kp_src || '–')})`],
@@ -173,6 +174,7 @@
         <div class="pct">${pct(n.score)}</div>
         <div>${chip(n.rating)}</div>
         <div class="mini"><span>Act ${pct(n.factors.activity)}</span><span>Clear ${pct(n.factors.clear)}</span></div>
+        <span class="conf" style="width:max-content">${n.confidence}</span>
       </button>`).join('');
     document.querySelectorAll('.night').forEach((b) => b.addEventListener('click', () => {
       selected = b.dataset.date;
@@ -225,12 +227,45 @@
     `<text x="${x0 - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`).join('');
   const hlBand = (hl, bands, i, top, h) => { hl.innerHTML = i < 0 ? '' : `<rect x="${bands[i][0]}" y="${top}" width="${bands[i][1] - bands[i][0]}" height="${h}" fill="rgba(255,255,255,0.07)"/>`; };
 
-  // ------------------------------------------------------------ night detail (hourly chart)
+  // ------------------------------------------------------------ night detail (hourly chart + GO/TRY/NO table)
+  // Same conservative spirit as the alerts. Uses MET Norway clouds when available, else the model average.
+  function hourStatus(h) {
+    if (!h.dark) return ['', 'day', h.sun > -6 ? 'Daylight / dusk' : 'Twilight'];
+    const cloud = h.cloud_met ?? h.cloud_mean;
+    if (h.p_act < 0.25) return ['NO', 'no', 'activity too weak'];
+    if (cloud == null) return ['?', 'unk', 'no cloud forecast yet'];
+    if (h.p_act >= 0.5 && cloud <= 30) return ['GO', 'go', ''];
+    if (cloud <= 70) return ['TRY', 'try', cloud > 30 ? 'some cloud' : 'activity uncertain'];
+    return ['NO', 'no', 'cloudy'];
+  }
+
+  function hoursTable(n) {
+    const hasMet = n.hourly.some((h) => h.cloud_met != null);
+    const rows = n.hourly.filter((h) => h.sun < -3);
+    return `
+      <h3 style="margin-top:16px">Hour by hour</h3>
+      <div class="tbl-wrap"><table class="hours">
+        <tr><th>Time</th><th>Status</th><th>Kp<br><span class="why">fc / need</span></th><th>Cloud<br><span class="why">MET</span></th><th>Cloud<br><span class="why">models</span></th></tr>
+        ${rows.map((h) => {
+          const [lab, cls, why] = hourStatus(h);
+          return `<tr class="${h.dark ? '' : 'dim'}"><td>${h.local}</td>
+            <td>${lab ? `<span class="st ${cls}">${lab}</span>` : ''}${why ? `<span class="why block">${why}</span>` : ''}</td>
+            <td>${h.kp.toFixed(1)} / ${h.kp_req.toFixed(1)}</td>
+            <td>${h.cloud_met != null ? Math.round(h.cloud_met) + '%' : '–'}</td>
+            <td>${h.cloud_mean != null ? `${Math.round(h.cloud_mean)}%<span class="why block">${Math.round(h.cloud_p10)}–${Math.round(h.cloud_p90)}</span>` : '–'}</td></tr>`;
+        }).join('')}
+      </table></div>
+      <div class="hint">Cloud MET = MET Norway 2.5 km model · Cloud models = ECMWF/GFS ensemble average, small numbers = likely range.<br><span class="st go">GO</span> dark, activity chance ≥50% and cloud ≤30% · <span class="st try">TRY</span> activity chance ≥25% and cloud ≤70% · <span class="st no">NO</span> otherwise.
+        Status uses MET Norway clouds when available, otherwise the model average (range = likely spread).
+        ${hasMet ? '' : '<br>MET Norway (2.5 km) reaches a night about 2.5 days before it; until then that column stays empty.'}</div>`;
+  }
+
   function renderDetail() {
     const n = D.nights.find((x) => x.date === selected);
     if (!n) return;
     const hours = n.hourly;
     const hasCloud = hours.some((h) => h.cloud_mean != null);
+    const hasMet = hours.some((h) => h.cloud_met != null);
     $('#night-detail').innerHTML = `
       <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">${dayLabel(n.date)} · ${esc(shortPlace(n.place))}</h3>${chip(n.rating)}
@@ -241,6 +276,7 @@
         <div>
           <div class="legend">
             <span><i style="background:#3987e5"></i>Cloud cover (model average; thin line = likely range)</span>
+            ${hasMet ? '<span><i class="dotm" style="background:#fff"></i>Cloud cover, MET Norway (2.5 km)</span>' : ''}
             <span><i class="line" style="background:#d95926"></i>Chance activity is strong enough here</span>
             <span><i class="band"></i>Dark hours</span>
           </div>
@@ -249,10 +285,11 @@
           <div class="hint">Times are ship time (UTC+2). <b>Kp forecast</b> = expected geomagnetic activity (0–9). <b>Kp needed</b> = the level at which aurora is clearly visible where the ship is at that hour (higher the further south). <b>Activity chance</b> = probability that the real Kp reaches the needed level, allowing for forecast error. At midnight: ${kpNeedText(n.kp_req)}.</div>
         </div>
       </div>
+      ${hoursTable(n)}
       ${formula(n)}
-      <details class="table"><summary>Show hour-by-hour table</summary><div class="tbl-wrap"><table>
-        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Cloud</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
-        ${hours.map((h) => `<tr><td>${h.local}</td><td>${esc(shortPlace(h.place)).slice(0, 26)}</td><td>${h.sun}°</td><td>${h.cloud_mean ?? '–'}${h.cloud_mean != null ? '%' : ''}</td><td>${h.kp.toFixed(1)}</td><td>${h.kp_req.toFixed(1)}</td><td>${pct(h.p_act)}</td><td>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '%' : 'down'}</td></tr>`).join('')}
+      <details class="table"><summary>Show all data (table)</summary><div class="tbl-wrap"><table>
+        <tr><th>Time</th><th>Where</th><th>Sun</th><th>Cloud models</th><th>Cloud MET</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
+        ${hours.map((h) => `<tr><td>${h.local}</td><td>${esc(shortPlace(h.place)).slice(0, 26)}</td><td>${h.sun}°</td><td>${h.cloud_mean ?? '–'}${h.cloud_mean != null ? '%' : ''}</td><td>${h.cloud_met ?? '–'}${h.cloud_met != null ? '%' : ''}</td><td>${h.kp.toFixed(1)}</td><td>${h.kp_req.toFixed(1)}</td><td>${pct(h.p_act)}</td><td>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '%' : 'down'}</td></tr>`).join('')}
       </table></div></details>`;
     drawHourly(n);
   }
@@ -275,6 +312,9 @@
       g += `<path d="${roundTopBar(cx - w / 2, y(h.cloud_mean), w, y(0) - y(h.cloud_mean))}" fill="#3987e5"/>`;
       if (h.cloud_p10 != null) g += `<line x1="${cx}" x2="${cx}" y1="${y(h.cloud_p90)}" y2="${y(h.cloud_p10)}" stroke="#9ec5f4" stroke-width="2" stroke-linecap="round" opacity="0.8"/>`;
     });
+    hours.forEach((h, i) => {
+      if (h.cloud_met != null) g += `<circle cx="${ml + i * bw + bw / 2}" cy="${y(h.cloud_met)}" r="3.5" fill="#fff" stroke="#16171a" stroke-width="2"/>`;
+    });
     const pts = hours.map((h, i) => [ml + i * bw + bw / 2, y(h.p_act * 100)]);
     g += `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" fill="none" stroke="#d95926" stroke-width="2" stroke-linejoin="round"/>`;
     pts.forEach(([px, py], i) => { if (hours[i].dark) g += `<circle cx="${px}" cy="${py}" r="4" fill="#d95926" stroke="#16171a" stroke-width="2"/>`; });
@@ -292,7 +332,9 @@
       const h = hours[i];
       return `<b>${h.local}</b> · ${esc(shortPlace(h.place))}
         <div class="row"><span>Sun</span><span>${h.sun}° ${h.dark ? '(dark)' : '(twilight/day)'}</span></div>
-        <div class="row"><span>Cloud</span><span>${h.cloud_mean != null ? `${h.cloud_mean}% (${h.cloud_p10}–${h.cloud_p90})` : 'no forecast yet'}</span></div>
+        <div class="row"><span>Cloud (models)</span><span>${h.cloud_mean != null ? `${h.cloud_mean}% (${h.cloud_p10}–${h.cloud_p90})` : 'no forecast yet'}</span></div>
+        ${h.cloud_met != null ? `<div class="row"><span>Cloud (MET Norway)</span><span>${h.cloud_met}%</span></div>` : ''}
+        <div class="row"><span>Status</span><span>${hourStatus(h)[0] || '–'} ${hourStatus(h)[2]}</span></div>
         <div class="row"><span>Kp forecast</span><span>${h.kp.toFixed(1)}</span></div>
         <div class="row"><span>Kp needed here</span><span>${h.kp_req.toFixed(1)}</span></div>
         <div class="row"><span>Activity chance</span><span>${pct(h.p_act)}</span></div>
@@ -623,8 +665,17 @@
       $('#hero').innerHTML = `<div class="empty">Could not load the forecast data (${esc(e.message)}). Check the connection and reload.</div>`;
       return;
     }
-    selected = tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
+    // Deep link from notifications: ?night=YYYY-MM-DD opens that night's detail.
+    const wanted = new URLSearchParams(location.search).get('night');
+    const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
+    selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
     [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, navSpy].forEach(safe);
+    if (linked) {
+      // instant jump (the CSS smooth scrolling would animate and can be interrupted); repeat once late content has loaded
+      const jump = () => window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - 70, behavior: 'instant' });
+      setTimeout(jump, 250);
+      setTimeout(jump, 1200);
+    }
 
     let lastW = window.innerWidth, timer = null;
     window.addEventListener('resize', () => {

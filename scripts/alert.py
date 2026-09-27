@@ -75,18 +75,36 @@ def live_readings(lat, lon):
     except Exception as e:
         out["ovation_error"] = str(e)
     try:
-        wx = http_get_json(f"https://api.open-meteo.com/v1/forecast?latitude={lat:.2f}&longitude={lon:.2f}"
-                           "&current=cloud_cover,cloud_cover_low&timezone=GMT")
-        out["cloud"] = wx["current"]["cloud_cover"]
-        out["cloud_low"] = wx["current"].get("cloud_cover_low")
+        # MET Norway's 2.5 km model is the best short-range cloud source along the Norwegian coast.
+        met = http_get_json(f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2f}&lon={lon:.2f}")
+        hour = utcnow().replace(minute=0, second=0, microsecond=0)
+        for t in met["properties"]["timeseries"]:
+            if parse_utc(t["time"]) >= hour:
+                out["cloud"] = round(t["data"]["instant"]["details"]["cloud_area_fraction"])
+                out["cloud_src"] = "MET Norway"
+                break
     except Exception as e:
         out["cloud_error"] = str(e)
+    if "cloud" not in out:
+        try:
+            wx = http_get_json(f"https://api.open-meteo.com/v1/forecast?latitude={lat:.2f}&longitude={lon:.2f}"
+                               "&current=cloud_cover&timezone=GMT")
+            out["cloud"] = wx["current"]["cloud_cover"]
+            out["cloud_src"] = "Open-Meteo"
+        except Exception as e:
+            out["cloud_error"] = str(e)
     return out
 
 
-def send(title, message, priority=4, tags=None, dry=False):
+def tonight_link(now):
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+    night = (local - timedelta(days=1) if local.hour < 12 else local).date().isoformat()
+    return f"{DASHBOARD}?night={night}"
+
+
+def send(title, message, priority=4, tags=None, dry=False, click=DASHBOARD):
     payload = {"topic": os.environ.get("NTFY_TOPIC", ""), "title": title, "message": message,
-               "priority": priority, "tags": tags or [], "click": DASHBOARD}
+               "priority": priority, "tags": tags or [], "click": click}
     if dry:
         print("DRY-RUN would send:", json.dumps(payload, ensure_ascii=False, indent=1))
         return
@@ -110,7 +128,7 @@ def fmt_live(lv, req):
     if "ovation_local" in lv:
         parts.append(f"OVATION {lv['ovation_local']}% overhead, {lv['ovation_north']}% to the north")
     if "cloud" in lv:
-        parts.append(f"clouds {lv['cloud']}%")
+        parts.append(f"clouds {lv['cloud']}% ({lv.get('cloud_src', '')})")
     return " · ".join(parts)
 
 
@@ -156,7 +174,7 @@ def main():
                    + (f", forecast cloud ≈{cloud:.0f}%" if cloud is not None else "")
                    + f". Activity {round(n['activity']['p'] * 100)}%. " + " ".join(n["notes"][:2]))
             send(f"🌌 Tonight's aurora outlook: {n['rating']}", msg, priority=3, tags=["crescent_moon"],
-                 dry=args.dry_run)
+                 dry=args.dry_run, click=tonight_link(now))
             state["briefings"].append(today)
             changed = True
 
@@ -187,7 +205,7 @@ def main():
                 else:
                     title, prio, tags = "🟢 Aurora likely — go outside", 4, ["sparkles"]
                 send(title, f"{pos['place']}. Look north, away from ship lights. {fmt_live(lv, req)}",
-                     priority=prio, tags=tags, dry=args.dry_run)
+                     priority=prio, tags=tags, dry=args.dry_run, click=tonight_link(now))
                 state["last_alert"] = iso(now)
                 state["last_level"] = level
                 changed = True
