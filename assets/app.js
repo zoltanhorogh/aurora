@@ -45,6 +45,7 @@
   let WX = null;     // weather.json
   let SKY = null;    // sky_obs.json (all-sky camera AI, hourly)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
+  let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
   let selected = null;
   let bzPts = null;  // loaded on demand
 
@@ -634,47 +635,122 @@
   }
 
   // ------------------------------------------------------------ live
-  function hp30Tile(need, t) {
-    if (!HP30 || !HP30.length) return t('Activity now (Hp30)', '–', 'not available');
+  const setTile = (id, v, sub) => { const e = document.getElementById(id); if (e) { e.querySelector('.v').innerHTML = v; e.querySelector('.s').innerHTML = sub; } };
+
+  // Kp level needed for aurora overhead at the ship (same rule as the pipeline).
+  function liveNeed() {
+    const s = shipNow();
+    const R = Math.PI / 180;
+    const mlat = Math.asin(Math.sin(s.lat * R) * Math.sin(80.8 * R) + Math.cos(s.lat * R) * Math.cos(80.8 * R) * Math.cos((s.lon + 72.6) * R)) / R;
+    return Math.max(0, Math.min(9, (67.5 - mlat) / 1.8 + 0.5));
+  }
+
+  // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
+  const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
+
+  function updateHp30Tile() {
+    if (!HP30 || !HP30.length) return setTile('lt-hp', '–', 'not available');
+    const need = liveNeed();
     const [ts, v] = HP30[HP30.length - 1];
     const max24 = Math.max(...HP30.map((p) => p[1]));
     const ageMin = Math.round((Date.now() - new Date(ts)) / 60000) - 30; // value covers ts..ts+30min
-    return t('Activity now (Hp30)', v.toFixed(1),
+    setTile('lt-hp', v.toFixed(1),
       `needed here ≈${need.toFixed(0)} ${v >= need ? '✓' : '✕'} · ${hm(new Date(new Date(ts).getTime() + 1800e3))} ship time${ageMin > 90 ? ' (old)' : ''} · 24 h max ${max24.toFixed(1)}`);
+  }
+
+  // Nearest FMI magnetometer to the ship (Tromsø area before the cruise). None near the southern ports.
+  function updateMagTile() {
+    const st = MAG && MAG.stations;
+    if (!st || !Object.keys(st).length) return setTile('lt-mag', '–', 'no reading yet (logged after dark only)');
+    const s = shipNow();
+    const [lat, lon] = s.sailing ? [s.lat, s.lon] : [69.65, 18.96];
+    const R = Math.PI / 180;
+    const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
+    const best = Object.values(st).reduce((b, x) => (!b || km(x) < km(b) ? x : b), null);
+    if (km(best) > 300) return setTile('lt-mag', '–', 'no station near the ship here: use Kp, Hp30 and the map');
+    const level = best.swing_60 >= 200 ? '<span class="ok">strong: go outside if clear</span>' : best.swing_60 >= 50 ? 'active: aurora likely nearby' : 'quiet';
+    const drop = best.change_10 <= -50 ? ` · ⬇ dropped ${-best.change_10} nT in 10 min` : '';
+    const old = Date.now() - new Date(best.t) > 40 * 60e3;
+    setTile('lt-mag', `${best.swing_60}<small> nT</small>`,
+      `${level}${drop} · swing in the last hour at ${esc(best.name)} (${Math.round(km(best) / 10) * 10} km) · ${hm(best.t)} ship time${old ? ' (old: logged after dark only)' : ''}`);
+  }
+
+  function refreshNoaaTiles() {
+    const need = liveNeed();
+    getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
+      const k = a[a.length - 1].estimated_kp;
+      setTile('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(0)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
+    }).catch(() => setTile('lt-kp', '–', 'offline'));
+    getJSON(`${SWPC}/products/summary/solar-wind-mag-field.json`).then((a) => {
+      const bz = a[0].bz_gsm;
+      setTile('lt-bz', `${bz > 0 ? '+' : ''}${bz}<small> nT</small>`, bz <= -5 ? '✓ strongly south: door open' : bz < 0 ? 'slightly south' : '✕ north: door mostly closed');
+    }).catch(() => setTile('lt-bz', '–', 'offline'));
+    getJSON(`${SWPC}/products/summary/solar-wind-speed.json`).then((a) => {
+      const v = a[0].proton_speed;
+      setTile('lt-sw', `${v}<small> km/s</small>`, v >= 500 ? '✓ fast' : v >= 400 ? 'moderate' : 'slow');
+    }).catch(() => setTile('lt-sw', '–', 'offline'));
+    const st = $('#live-stamp');
+    if (st) st.textContent = `Updated ${hm(Date.now())} ship time · refreshes by itself while this page is open (numbers every 2 min, pictures and map every 10 min)`;
+  }
+
+  // Files the robot writes: Hp30 and the magnetometer swing.
+  async function refreshRobotFiles() {
+    const [hp, mag] = await Promise.all([getJSON('data/hp30.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+    HP30 = newerHp30(HP30, hp && hp.series);
+    if (mag) MAG = mag;
+    updateHp30Tile();
+    updateMagTile();
+  }
+
+  function refreshOvation() {
+    const s = shipNow();
+    getOvation().then((o) => {
+      const [lat, lon, label] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'Tromsø (not sailing yet)'];
+      const { local, north } = ovationAt(o, lat, lon);
+      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+    }).catch(() => setTile('lt-ov', '–', 'offline'));
+    drawOvationMap();
+    renderRouteOvation();
+  }
+
+  // Bigger downloads: OVATION model and map, Bz chart, camera pictures and AI, magnetogram.
+  function refreshHeavy() {
+    OVATION = null;
+    refreshOvation();
+    loadBz();
+    document.querySelectorAll('img[data-live]').forEach((img) => { img.src = `${img.dataset.live}?t=${Date.now()}`; });
+    loadAiChips();
+  }
+
+  // Live values refresh themselves while the page is visible; a hidden tab or a locked phone downloads nothing.
+  const LIVE_JOBS = [[2, refreshNoaaTiles], [5, refreshRobotFiles], [10, refreshHeavy]];
+  const liveLast = new Map();
+  function liveTick() {
+    if (document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    for (const [min, fn] of LIVE_JOBS) {
+      if (now - (liveLast.get(fn) || 0) >= min * 60e3 - 5e3) { liveLast.set(fn, now); safe(fn); }
+    }
+  }
+  function startLiveRefresh() {
+    const now = Date.now();
+    for (const [, fn] of LIVE_JOBS) liveLast.set(fn, now); // everything was just loaded by the first render
+    setInterval(liveTick, 30e3);
+    document.addEventListener('visibilitychange', liveTick);
   }
 
   function renderLive() {
     const s = shipNow();
     const t = (k, v, sub, id) => `<div class="tile" ${id ? `id="${id}"` : ''}><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
-    const R = Math.PI / 180;
-    const mlat = Math.asin(Math.sin(s.lat * R) * Math.sin(80.8 * R) + Math.cos(s.lat * R) * Math.cos(80.8 * R) * Math.cos((s.lon + 72.6) * R)) / R;
-    const need = Math.max(0, Math.min(9, (67.5 - mlat) / 1.8 + 0.5));
     $('#live-tiles').innerHTML =
-      t('Ship', `<span style="font-size:17px">${esc(shortPlace(s.place))}</span>`, s.sailing ? `${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)` : 'Not sailing yet: shows the planned start') +
-      t('Kp now', '…', '', 'lt-kp') + hp30Tile(need, t) + t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') +
-      t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
-    const set = (id, v, sub) => { const e = document.getElementById(id); if (e) { e.querySelector('.v').innerHTML = v; e.querySelector('.s').innerHTML = sub; } };
-
-    getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
-      const k = a[a.length - 1].estimated_kp;
-      set('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(0)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
-    }).catch(() => set('lt-kp', '–', 'offline'));
-    getJSON(`${SWPC}/products/summary/solar-wind-mag-field.json`).then((a) => {
-      const bz = a[0].bz_gsm;
-      set('lt-bz', `${bz > 0 ? '+' : ''}${bz}<small> nT</small>`, bz <= -5 ? '✓ strongly south: door open' : bz < 0 ? 'slightly south' : '✕ north: door mostly closed');
-    }).catch(() => set('lt-bz', '–', 'offline'));
-    getJSON(`${SWPC}/products/summary/solar-wind-speed.json`).then((a) => {
-      const v = a[0].proton_speed;
-      set('lt-sw', `${v}<small> km/s</small>`, v >= 500 ? '✓ fast' : v >= 400 ? 'moderate' : 'slow');
-    }).catch(() => set('lt-sw', '–', 'offline'));
+      `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.sailing ? `${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)` : 'Not sailing yet: shows the planned start'}</div></div>` +
+      t('Kp now', '…', '', 'lt-kp') + t('Activity now (Hp30)', '…', '', 'lt-hp') + t('Magnetometer', '…', '', 'lt-mag') +
+      t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
+    refreshNoaaTiles();
+    updateHp30Tile();
+    updateMagTile();
 
     // Everything loads automatically (the ship has fast Starlink-based Wi-Fi); ~2.5 MB per page view.
-    getOvation().then((o) => {
-      const [lat, lon, label] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'Tromsø (not sailing yet)'];
-      const { local, north } = ovationAt(o, lat, lon);
-      set('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
-    }).catch(() => set('lt-ov', '–', 'offline'));
-
     $('#bz-panel').innerHTML = `<h3>Solar wind Bz, last 24 h</h3>
       <p class="hint">Negative (south) Bz lets solar-wind energy in; 20+ minutes below −5 nT often triggers aurora within the hour.</p>
       <button class="btn" id="bz-btn">Loading…</button><div class="chart" id="bz-chart"></div>`;
@@ -686,8 +762,7 @@
       <div id="ovmap"></div>
       <div class="legend" style="margin-top:8px"><span><i style="background:#1faa59"></i>possible (≥5%)</span><span><i style="background:#9fd13b"></i>likely (≥20%)</span><span><i style="background:#f2c230"></i>very likely (≥40%)</span><span><i style="background:#e5533d"></i>strong (≥60%)</span></div>
       <div class="hint" id="ovmap-meta"></div>`;
-    drawOvationMap();
-    renderRouteOvation();
+    refreshOvation();
   }
 
   // OVATION probability overhead (±1°) and the strongest value within view to the north (up to 8° north, ±10° lon).
@@ -716,26 +791,32 @@
     return ['mixed', 'Mixed / uncertain', aurora];
   }
 
+  const AI_SITES = [['tromso', 'Tromsø', 'Data.json'], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json'], ['kiruna', 'Kiruna (Sweden)', 'Data_kiruna.json']];
   function renderCams() {
     const el = $('#cams');
     if (!el) return;
     const t = Date.now();
-    const sites = [['tromso', 'Tromsø', 'Data.json'], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json'], ['kiruna', 'Kiruna (Sweden)', 'Data_kiruna.json']];
+    const sites = AI_SITES;
     el.innerHTML = `<h3>Sky cameras right now</h3>
       <p class="hint" style="margin-top:0">Research all-sky cameras film the whole sky every minute. An AI (Tromsø AI) looks at each picture and says whether it shows aurora, clear sky or cloud. This is what is really happening up north now, even when the ship's sky is cloudy.</p>
       <div class="ailabel">AI verdict on the latest picture</div>
       <div class="aichips">${sites.map(([id, name]) => `<div class="aichip" id="ai-${id}"><div class="k">${esc(name)}</div><div class="v">…</div><div class="s"></div></div>`).join('')}</div>
       <div class="grid2" style="margin-top:10px">
-        <figure class="cam"><img src="https://fox.phys.uit.no/ASC/Latest_ASC01.png?t=${t}" alt="Skibotn all-sky camera, latest image" loading="lazy"><figcaption>Skibotn (UiT) · <a href="https://fox.phys.uit.no/ASC/ASC01.html" target="_blank" rel="noopener">live page</a> · <a href="https://fox.phys.uit.no/ASC/keogram_ASC01.png?t=${t}" target="_blank" rel="noopener">tonight's keogram</a></figcaption></figure>
-        <figure class="cam"><img src="https://www.irf.se/alis/allsky/krn/latest_medium.jpeg?t=${t}" alt="Kiruna all-sky camera, latest image" loading="lazy"><figcaption>Kiruna (IRF) · <a href="https://www2.irf.se/Observatory/?link=All-sky_sp_camera" target="_blank" rel="noopener">live page</a> · <a href="https://www.irf.se/alis/allsky/krn/latest_nkeogram.gif?t=${t}" target="_blank" rel="noopener">last night's keogram</a></figcaption></figure>
+        <figure class="cam"><img src="https://fox.phys.uit.no/ASC/Latest_ASC01.png?t=${t}" data-live="https://fox.phys.uit.no/ASC/Latest_ASC01.png" alt="Skibotn all-sky camera, latest image" loading="lazy"><figcaption>Skibotn (UiT) · <a href="https://fox.phys.uit.no/ASC/ASC01.html" target="_blank" rel="noopener">live page</a> · <a href="https://fox.phys.uit.no/ASC/keogram_ASC01.png?t=${t}" target="_blank" rel="noopener">tonight's keogram</a></figcaption></figure>
+        <figure class="cam"><img src="https://www.irf.se/alis/allsky/krn/latest_medium.jpeg?t=${t}" data-live="https://www.irf.se/alis/allsky/krn/latest_medium.jpeg" alt="Kiruna all-sky camera, latest image" loading="lazy"><figcaption>Kiruna (IRF) · <a href="https://www2.irf.se/Observatory/?link=All-sky_sp_camera" target="_blank" rel="noopener">live page</a> · <a href="https://www.irf.se/alis/allsky/krn/latest_nkeogram.gif?t=${t}" target="_blank" rel="noopener">last night's keogram</a></figcaption></figure>
       </div>
       <p class="hint">A round fisheye picture of the whole sky: north is up, the edge is the horizon. In daylight the picture is white or washed out; at night: dark grey all over = cloud, stars = clear, green bands = aurora. Keogram = the whole night squeezed into one picture (time runs left to right). Classification: <a href="https://tromsoe-ai.cei.uec.ac.jp/" target="_blank" rel="noopener">Tromsø AI</a> (UEC Japan).</p>`;
-    for (const [id, , file] of sites) {
+    loadAiChips();
+  }
+
+  function loadAiChips() {
+    for (const [id, , file] of AI_SITES) {
       getJSON(AI_BASE + file).then((js) => {
         const [cls, text, aurora] = aiVerdict(js.Aurora || {});
         const when = new Date(js.Time.replace(' ', 'T') + 'Z');
         const box = document.getElementById(`ai-${id}`);
-        box.classList.add(cls);
+        if (!box) return;
+        box.className = `aichip ${cls}`;
         box.querySelector('.v').textContent = `AI: ${text}`;
         const paused = Date.now() - when > 45 * 60000;
         box.querySelector('.s').textContent = `aurora ${Math.round(aurora)}% · clear ${Math.round(js.Aurora.Clear || 0)}% · cloudy ${Math.round(js.Aurora.Cloudy || 0)}% · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}`;
@@ -752,7 +833,7 @@
     el.innerHTML = `<h3>Local magnetometer <span class="why">· last 24 h</span></h3>
       <p class="hint" style="margin-top:0">The most direct "is something happening right above us" signal. When aurora is active overhead, the Earth's magnetic field there starts to wobble.</p>
       <div class="daytabs">${sites.map(([id, name]) => `<button class="btn ${id === magSite ? 'on' : ''}" data-m="${id}">${name}</button>`).join('')}</div>
-      <a href="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" target="_blank" rel="noopener"><img class="magimg" src="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif?t=${Date.now()}" alt="Magnetogram, last 24 hours" loading="lazy"></a>
+      <a href="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" target="_blank" rel="noopener"><img class="magimg" src="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif?t=${Date.now()}" data-live="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" alt="Magnetogram, last 24 hours" loading="lazy"></a>
       <p class="hint"><b>How to read it:</b> look at the <b style="color:#6da7ec">blue line</b> (horizontal field). Flat or gently wavy = quiet. A <b>sudden dip of 50+ nT</b> within minutes = a substorm, aurora is active over that area now; <b>200+ nT</b> = strong display. The time axis is UTC: add 2 hours for ship time. Updates every few minutes. Source: Tromsø Geophysical Observatory (UiT).</p>
       <p class="hint">Direct links, if the picture above does not load: <a href="https://flux.phys.uit.no/Last24/Last24_tro2a.gif" target="_blank" rel="noopener">Tromsø magnetogram</a> · <a href="https://flux.phys.uit.no/Last24/Last24_sor1a.gif" target="_blank" rel="noopener">Sørøya magnetogram</a> · <a href="https://flux.phys.uit.no/stackplot/" target="_blank" rel="noopener">all stations on one chart</a> · <a href="https://flux.phys.uit.no/Last24/" target="_blank" rel="noopener">TGO realtime page</a></p>`;
     el.querySelectorAll('.daytabs button').forEach((b) => b.addEventListener('click', () => { magSite = b.dataset.m; renderMag(); }));
@@ -787,56 +868,68 @@
   }
 
   // NOAA OVATION grid (1° x 1°) drawn on a Norway-centred map, with route and ship.
-  let OVATION = null;
-  async function getOvation() {
-    if (!OVATION) OVATION = await getJSON(`${SWPC}/json/ovation_aurora_latest.json`);
+  let OVATION = null; // shared promise, so the tile, the map and the route table download the model once
+  function getOvation() {
+    if (!OVATION) OVATION = getJSON(`${SWPC}/json/ovation_aurora_latest.json`).catch((e) => { OVATION = null; throw e; });
     return OVATION;
   }
   const ovColor = (p) => (p >= 60 ? '#e5533d' : p >= 40 ? '#f2c230' : p >= 20 ? '#9fd13b' : '#1faa59');
 
+  // The map is built once; each refresh only swaps the coloured probability layer.
+  let ovMap = null, ovCells = null, ovRenderer = null;
   async function drawOvationMap() {
     const box = $('#ovmap');
+    if (!box) return;
     if (!window.L) { box.innerHTML = '<div class="empty">Map library could not load (offline?).</div>'; return; }
-    box.innerHTML = '<div class="empty">Loading NOAA model…</div>';
+    if (!ovMap) box.innerHTML = '<div class="empty">Loading NOAA model…</div>';
     let o;
-    try { o = await getOvation(); } catch { box.innerHTML = '<div class="empty">Could not load the NOAA model (offline?). <button class="btn" id="ovmap-btn">Retry</button></div>'; $('#ovmap-btn').addEventListener('click', drawOvationMap); return; }
-    box.innerHTML = '';
-    box.classList.add('ovmap');
-    const map = L.map(box, { scrollWheelZoom: false, zoomControl: true, attributionControl: true });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 8, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · NOAA SWPC OVATION',
-    }).addTo(map);
-    const renderer = L.canvas({ padding: 0.3 });
+    try { o = await getOvation(); } catch {
+      if (!ovMap) { box.innerHTML = '<div class="empty">Could not load the NOAA model (offline?). <button class="btn" id="ovmap-btn">Retry</button></div>'; $('#ovmap-btn').addEventListener('click', drawOvationMap); }
+      return;
+    }
+    if (!ovMap) {
+      box.innerHTML = '';
+      box.classList.add('ovmap');
+      ovMap = L.map(box, { scrollWheelZoom: false, zoomControl: true, attributionControl: true });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 8, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · NOAA SWPC OVATION',
+      }).addTo(ovMap);
+      ovMap.createPane('cells').style.zIndex = 350; // under the route and ship markers
+      ovRenderer = L.canvas({ padding: 0.3, pane: 'cells' });
+      L.polyline(D.route_hourly.map((r) => [r[1], r[2]]), { color: '#9085e9', weight: 1.5, opacity: 0.7, dashArray: '4 4' }).addTo(ovMap);
+      const s = shipNow();
+      if (s.sailing) L.circleMarker([s.lat, s.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#3ee08f', fillOpacity: 1 }).addTo(ovMap).bindTooltip('Ship now', { permanent: true, direction: 'right' });
+      else for (const [name, lat, lon, dir] of [['Tromsø', 69.65, 18.96, 'left'], ['Alta', 69.98, 23.25, 'right']]) L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#fff', fillOpacity: 1 }).addTo(ovMap).bindTooltip(name, { permanent: true, direction: dir });
+      ovMap.fitBounds([[61, 4], [75, 30]]);
+    }
+    if (ovCells) ovCells.remove();
+    ovCells = L.layerGroup();
     for (const [glon, glat, p] of o.coordinates) {
       if (p < 5 || glat < 52 || glat > 84) continue;
       const lon = glon > 180 ? glon - 360 : glon;
       if (lon < -30 || lon > 50) continue;
       L.rectangle([[glat - 0.5, lon - 0.5], [glat + 0.5, lon + 0.5]], {
-        renderer, stroke: false, fillColor: ovColor(p), fillOpacity: Math.min(0.75, 0.25 + p / 120), interactive: false,
-      }).addTo(map);
+        renderer: ovRenderer, stroke: false, fillColor: ovColor(p), fillOpacity: Math.min(0.75, 0.25 + p / 120), interactive: false,
+      }).addTo(ovCells);
     }
-    L.polyline(D.route_hourly.map((r) => [r[1], r[2]]), { color: '#9085e9', weight: 1.5, opacity: 0.7, dashArray: '4 4' }).addTo(map);
-    const s = shipNow();
-    if (s.sailing) L.circleMarker([s.lat, s.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#3ee08f', fillOpacity: 1 }).addTo(map).bindTooltip('Ship now', { permanent: true, direction: 'right' });
-    else for (const [name, lat, lon, dir] of [['Tromsø', 69.65, 18.96, 'left'], ['Alta', 69.98, 23.25, 'right']]) L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#fff', fillOpacity: 1 }).addTo(map).bindTooltip(name, { permanent: true, direction: dir });
-    map.fitBounds([[61, 4], [75, 30]]);
+    ovCells.addTo(ovMap);
     const ft = o['Forecast Time'] || o['Observation Time'];
-    $('#ovmap-meta').textContent = ft ? `Model valid for ${hm(ft)} ship time (${ago(o['Observation Time'] || ft)} data). Reload the page for a fresh run.` : '';
+    $('#ovmap-meta').textContent = ft ? `Model valid for ${hm(ft)} ship time (${ago(o['Observation Time'] || ft)} data). Refreshes every 10 min while this page is open.` : '';
   }
 
   async function loadBz() {
     const btn = $('#bz-btn');
-    btn.disabled = true; btn.textContent = 'Loading…';
+    if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     try {
       const raw = await getJSON(`${SWPC}/json/rtsw/rtsw_mag_1m.json`);
       const rows = raw.filter((r) => r.active && r.bz_gsm != null).map((r) => [new Date(r.time_tag + 'Z').getTime(), r.bz_gsm]).sort((a, b) => a[0] - b[0]);
       const bins = new Map();
       for (const [t, v] of rows) { const k = Math.floor(t / 600e3) * 600e3; const b = bins.get(k) || [0, 0]; b[0] += v; b[1]++; bins.set(k, b); }
       bzPts = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([t, [s, n]]) => [t, s / n]);
-      btn.remove();
+      if (btn) btn.remove();
       drawBz();
     } catch (e) {
-      btn.disabled = false; btn.textContent = 'Retry (offline?)';
+      if (btn) { btn.disabled = false; btn.textContent = 'Retry (offline?)'; } // on a background refresh keep the last chart
     }
   }
 
@@ -1164,12 +1257,10 @@
   async function boot() {
     try {
       let hpFile;
-      [D, HIST, VER, hpFile, WX, SKY] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
+      [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
-        getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null)]);
-      const a = (D.space_weather && D.space_weather.hp30) || [];
-      const b = (hpFile && hpFile.series) || [];
-      HP30 = (b.length && (!a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : a;
+        getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+      HP30 = newerHp30((D.space_weather && D.space_weather.hp30) || [], hpFile && hpFile.series);
     } catch (e) {
       $('#fresh').innerHTML = '<span class="dot bad"></span>data unavailable';
       $('#hero').innerHTML = `<div class="empty">Could not load the forecast data (${esc(e.message)}). Check the connection and reload.</div>`;
@@ -1180,6 +1271,7 @@
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
     [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    startLiveRefresh();
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {
