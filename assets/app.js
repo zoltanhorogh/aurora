@@ -741,6 +741,20 @@
     }
   }
 
+  // ------------------------------------------------------------ local magnetometers (Tromsø Geophysical Observatory)
+  let magSite = 'tro2a';
+  function renderMag() {
+    const el = $('#mag');
+    if (!el) return;
+    const sites = [['tro2a', 'Tromsø'], ['sor1a', 'Sørøya (near Alta)']];
+    el.innerHTML = `<h3>Local magnetometer <span class="why">· last 24 h</span></h3>
+      <p class="hint" style="margin-top:0">The most direct "is something happening right above us" signal. When aurora is active overhead, the Earth's magnetic field there starts to wobble.</p>
+      <div class="daytabs">${sites.map(([id, name]) => `<button class="btn ${id === magSite ? 'on' : ''}" data-m="${id}">${name}</button>`).join('')}</div>
+      <a href="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" target="_blank" rel="noopener"><img class="magimg" src="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif?t=${Date.now()}" alt="Magnetogram, last 24 hours" loading="lazy"></a>
+      <p class="hint"><b>How to read it:</b> look at the <b style="color:#6da7ec">blue line</b> (horizontal field). Flat or gently wavy = quiet. A <b>sudden dip of 50+ nT</b> within minutes = a substorm, aurora is active over that area now; <b>200+ nT</b> = strong display. The time axis is UTC: add 2 hours for ship time. Updates every few minutes. Source: <a href="https://flux.phys.uit.no/Last24/" target="_blank" rel="noopener">Tromsø Geophysical Observatory (UiT)</a>.</p>`;
+    el.querySelectorAll('.daytabs button').forEach((b) => b.addEventListener('click', () => { magSite = b.dataset.m; renderMag(); }));
+  }
+
   // Collapsed extra: the same "overhead now" numbers for every port and every at-sea night position.
   async function renderRouteOvation() {
     const body = $('#route-ov-body');
@@ -1162,7 +1176,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {
