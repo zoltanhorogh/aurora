@@ -18,11 +18,16 @@ from common import CONFIG, DATA, iso, load_json, parse_utc, save_json, utcnow
 CHANGE_PTS = 0.05
 MAX_CHANGES_PER_DAY = 2
 DIGEST_HOURS = (8, 12)
+DIGEST_MOVE_PTS = 3          # a night is mentioned in the morning digest when it moved at least this much
 LOCAL_OFFSET = 2
 
 
 def short_place(place):
     return "at sea" if place.startswith("At sea") else place.split(" →")[0]
+
+
+def day_label(date):
+    return parse_utc(date + "T12:00:00Z").strftime("%a %d %b")
 
 
 def line(n, prev=None):
@@ -105,12 +110,20 @@ def main():
 
     # ---- morning digest
     if DIGEST_HOURS[0] <= local.hour < DIGEST_HOURS[1] and state.get("digest_date") != today:
+        # Short on purpose: best night, the range of the Arctic nights, and at most two notable moves.
         prev = state.get("digest_values") or {}
         head = f"{days_to_go} days to go" if days_to_go > 0 else "On board"
-        msg = (f"{head} · Best: {line(best)} · "
-               + " · ".join(line(n, prev.get(n["date"])) for n in watch)
-               + f" · Confidence: {watch[0]['confidence'] if watch else '–'}")
-        send("🌅 Morning aurora outlook", msg, priority=3, tags=["sunrise"], click=link(best["date"]), dry=args.dry_run)
+        pcts = [round(n["score"] * 100) for n in watch]
+        moves = sorted((n for n in watch if n["date"] in prev
+                        and abs(round(n["score"] * 100) - round(prev[n["date"]]["score"] * 100)) >= DIGEST_MOVE_PTS),
+                       key=lambda n: -abs(n["score"] - prev[n["date"]]["score"]))[:2]
+        parts = [head, f"Best night: {day_label(best['date'])} {round(best['score'] * 100)}% {best['rating']}"]
+        if moves:
+            parts += [f"{'⬆' if n['score'] > prev[n['date']]['score'] else '⬇'} {day_label(n['date'])} {short_place(n['place'])} "
+                      f"{round(prev[n['date']]['score'] * 100)}% → {round(n['score'] * 100)}%" for n in moves]
+        elif pcts:
+            parts.append(f"Arctic nights {min(pcts)}–{max(pcts)}%, no big change")
+        send("🌅 Aurora outlook", " · ".join(parts), priority=3, tags=["sunrise"], click=link(best["date"]), dry=args.dry_run)
         state.update(digest_date=today, digest_values=cur)
         changed = True
 

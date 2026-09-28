@@ -3,6 +3,7 @@ name: Update forecast
 on:
   schedule:
     - cron: "17 */3 * * *"   # every 3 hours
+    - cron: "47 * 10-24 10 *"   # plus hourly during the cruise (10–24 Oct): fresh MET clouds for tonight
   workflow_dispatch:
 
 permissions:
