@@ -43,6 +43,7 @@
   let HIST = null;   // history.json
   let VER = null;    // verification.json
   let WX = null;     // weather.json
+  let SKY = null;    // sky_obs.json (all-sky camera AI, hourly)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let selected = null;
   let bzPts = null;  // loaded on demand
@@ -701,6 +702,45 @@
     return { local, north };
   }
 
+  // ------------------------------------------------------------ all-sky cameras (ground truth, live)
+  const AI_BASE = 'https://tromsoe-ai.cei.uec.ac.jp/~nanjo/public/aurora_alert/';
+  const AI_AURORA = ['Arc', 'Discrete', 'Diffuse', 'Aurora but cloudy', 'Aurora but bright'];
+  // What the camera AI sees, in plain words. `a` = its percentages.
+  function aiVerdict(a) {
+    const aurora = AI_AURORA.reduce((s, k) => s + (a[k] || 0), 0);
+    const type = AI_AURORA.reduce((b, k) => ((a[k] || 0) > (a[b] || 0) ? k : b), AI_AURORA[0]);
+    if (aurora >= 50) return ['good', `Aurora now (${type.toLowerCase()})`, aurora];
+    if ((a['Dusk/Dawn'] || 0) >= 50) return ['day', 'Daylight / twilight', aurora];
+    if ((a.Cloudy || 0) >= 50) return ['cloud', 'Cloudy', aurora];
+    if ((a.Clear || 0) >= 50) return ['clear', 'Clear sky, no aurora', aurora];
+    return ['mixed', 'Mixed / uncertain', aurora];
+  }
+
+  function renderCams() {
+    const el = $('#cams');
+    if (!el) return;
+    const t = Date.now();
+    const sites = [['tromso', 'Tromsø', 'Data.json'], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json'], ['kiruna', 'Kiruna (Sweden)', 'Data_kiruna.json']];
+    el.innerHTML = `<h3>Sky cameras right now</h3>
+      <p class="hint" style="margin-top:0">Research all-sky cameras film the whole sky every minute. An AI (Tromsø AI) looks at each picture and says whether it shows aurora, clear sky or cloud. This is what is really happening up north now, even when the ship's sky is cloudy.</p>
+      <div class="aichips">${sites.map(([id, name]) => `<div class="aichip" id="ai-${id}"><div class="k">${esc(name)}</div><div class="v">…</div><div class="s"></div></div>`).join('')}</div>
+      <div class="grid2" style="margin-top:10px">
+        <figure class="cam"><img src="https://fox.phys.uit.no/ASC/Latest_ASC01.png?t=${t}" alt="Skibotn all-sky camera, latest image" loading="lazy"><figcaption>Skibotn (UiT) · <a href="https://fox.phys.uit.no/ASC/ASC01.html" target="_blank" rel="noopener">live page</a> · <a href="https://fox.phys.uit.no/ASC/keogram_ASC01.png?t=${t}" target="_blank" rel="noopener">tonight's keogram</a></figcaption></figure>
+        <figure class="cam"><img src="https://www.irf.se/allsky/LASTv2.JPG?t=${t}" alt="Kiruna all-sky camera, latest image" loading="lazy"><figcaption>Kiruna (IRF) · <a href="https://www.irf.se/allsky/rtasc.php" target="_blank" rel="noopener">live page</a> · <a href="https://www.irf.se/allsky/asckeo.php" target="_blank" rel="noopener">keograms</a></figcaption></figure>
+      </div>
+      <p class="hint">A round fisheye picture of the whole sky: north is up, the edge is the horizon. Dark or grey all over = cloud or daylight; green bands = aurora. Keogram = the whole night squeezed into one picture (time runs left to right). Classification: <a href="https://tromsoe-ai.cei.uec.ac.jp/" target="_blank" rel="noopener">Tromsø AI</a> (UEC Japan).</p>`;
+    for (const [id, , file] of sites) {
+      getJSON(AI_BASE + file).then((js) => {
+        const [cls, text, aurora] = aiVerdict(js.Aurora || {});
+        const when = new Date(js.Time.replace(' ', 'T') + 'Z');
+        const box = document.getElementById(`ai-${id}`);
+        box.classList.add(cls);
+        box.querySelector('.v').textContent = text;
+        box.querySelector('.s').textContent = `aurora ${Math.round(aurora)}% · clear ${Math.round(js.Aurora.Clear || 0)}% · cloudy ${Math.round(js.Aurora.Cloudy || 0)}% · ${hm(when)} ship time${Date.now() - when > 45 * 60000 ? ' (paused in daylight)' : ''}`;
+      }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; });
+    }
+  }
+
   // Collapsed extra: the same "overhead now" numbers for every port and every at-sea night position.
   async function renderRouteOvation() {
     const body = $('#route-ov-body');
@@ -857,9 +897,22 @@
       }).join('');
       return lines || '<span class="why">not recorded</span>';
     };
+    // What the all-sky camera AI saw that night (Tromsø camera for Tromsø, Skibotn camera for Alta).
+    const camCell = (r) => {
+      const site = r.spot === 'Tromsø' ? 'tromso' : 'skibotn';
+      const hrs = SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date][site];
+      if (!hrs) return '<span class="why">–</span>';
+      const list = Object.entries(hrs).sort(([a], [b]) => ((+a + 12) % 24) - ((+b + 12) % 24));
+      const aur = list.filter(([, v]) => v.aurora >= 50).map(([h]) => `${h}:00`);
+      const clear = list.filter(([, v]) => v.clear >= 50).length;
+      const label = site === 'skibotn' ? '<span class="why"> (Skibotn cam)</span>' : '';
+      if (aur.length) return `<span class="ok">✓ aurora</span> ${aur[0]}${aur.length > 1 ? `–${aur[aur.length - 1]}` : ''} <span class="why">(${aur.length} h)</span>${label}`;
+      if (clear) return `clear, no aurora <span class="why">(${clear} h)</span>${label}`;
+      return `cloudy <span class="why">(${list.length} h checked)</span>${label}`;
+    };
     const row = (r) => {
       const o = r.observed;
-      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
+      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${camCell(r)}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
     };
     const score = (key) => {
       const js = recs.map((r) => judge(r, key)).filter(Boolean);
@@ -874,10 +927,10 @@
       <h3 style="margin-top:18px">How did it go? Past nights</h3>
       ${summary}
       <div class="tbl-wrap"><table>
-        <tr><th>Night</th><th>Spot</th><th style="text-align:left">Forecast (✓ = clouds right)</th><th>Actually clear (dark)</th><th>Hp30 max</th></tr>
+        <tr><th>Night</th><th>Spot</th><th style="text-align:left">Forecast (✓ = clouds right)</th><th>Actually clear (dark)</th><th>Camera saw</th><th>Hp30 max</th></tr>
         ${recs.map(row).join('')}
       </table></div>
-      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
+      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Camera saw = what the all-sky camera AI saw that night, checked once an hour (from 28 Sep on): the real ground truth. Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
   }
 
   // ------------------------------------------------------------ model check (next 3 nights in Tromsø and Alta)
@@ -1094,9 +1147,9 @@
   async function boot() {
     try {
       let hpFile;
-      [D, HIST, VER, hpFile, WX] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
+      [D, HIST, VER, hpFile, WX, SKY] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
-        getJSON('data/weather.json').catch(() => null)]);
+        getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null)]);
       const a = (D.space_weather && D.space_weather.hp30) || [];
       const b = (hpFile && hpFile.series) || [];
       HP30 = (b.length && (!a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : a;
@@ -1109,7 +1162,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {

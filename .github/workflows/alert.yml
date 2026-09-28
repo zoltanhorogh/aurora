@@ -35,11 +35,14 @@ jobs:
           else
             python scripts/alert.py
           fi
+      - name: Log all-sky camera AI (ground truth for the model check)
+        continue-on-error: true
+        run: python scripts/sky_log.py
       - name: Save alert state
         run: |
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/alert_state.json data/hp30.json 2>/dev/null || true
+          git add data/alert_state.json data/hp30.json data/sky_obs.json 2>/dev/null || true
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "Alert state $(date -u +'%Y-%m-%d %H:%M') UTC"
           for i in 1 2 3; do git pull --rebase -X theirs && git push && break; sleep 5; done
