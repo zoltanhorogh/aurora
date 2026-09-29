@@ -1,14 +1,16 @@
 """Shared helpers: itinerary/route, astronomy, geomagnetic latitude, HTTP."""
 import json
 import math
+import os
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG = ROOT / "config"
-DATA = ROOT / "data"
+# Overridable so tools/preflight.py can run everything on a temporary copy.
+CONFIG = Path(os.environ.get("AURORA_CONFIG") or ROOT / "config")
+DATA = Path(os.environ.get("AURORA_DATA") or ROOT / "data")
 UA = "aurora-dashboard (github.com/zoltanhorogh/aurora)"
 
 RAD = math.pi / 180
