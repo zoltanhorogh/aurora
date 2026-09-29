@@ -2,7 +2,7 @@ name: Aurora alerts
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # the script exits immediately outside the cruise
+    - cron: "*/10 * * * *"   # test alerts before the cruise, real ones during it (the loggers run first)
   workflow_dispatch:
     inputs:
       test:
@@ -26,6 +26,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Log all-sky camera AI (ground truth for the model check)
+        continue-on-error: true
+        run: python scripts/sky_log.py
+      - name: Log local magnetometer swing (live tile)
+        continue-on-error: true
+        run: python scripts/mag_log.py
       - name: Check conditions and notify
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
@@ -35,12 +41,6 @@ jobs:
           else
             python scripts/alert.py
           fi
-      - name: Log all-sky camera AI (ground truth for the model check)
-        continue-on-error: true
-        run: python scripts/sky_log.py
-      - name: Log local magnetometer swing (live tile)
-        continue-on-error: true
-        run: python scripts/mag_log.py
       - name: Save alert state
         run: |
           git config user.name "aurora-bot"

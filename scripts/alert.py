@@ -1,6 +1,9 @@
 """Real-time aurora alerts via ntfy push notifications.
 
-Runs every ~10 minutes from GitHub Actions. Outside the cruise it exits immediately.
+Runs every ~10 minutes from GitHub Actions.
+Before the cruise ("test season") it watches all Norwegian ports at once and sends "🧪 TEST" alerts when
+activity would be good enough at any of them in the dark, with each port's clouds in the message
+(max 2 per night), so the thresholds can be judged before the trip.
 During the cruise it sends:
   * an evening briefing (once per day, ~17-19h ship time) with tonight's outlook;
   * a "go outside" alert when live activity is good AND the sky at the ship is clear AND it is dark.
@@ -18,8 +21,8 @@ import os
 import urllib.request
 from datetime import datetime, timedelta
 
-from common import (CONFIG, DATA, UA, Route, fetch_hp30, http_get_json, iso, kp_required, load_json,
-                    mag_lat, parse_utc, save_json, sun_alt, utcnow)
+from common import (CONFIG, DATA, UA, Route, fetch_hp30, haversine_km, http_get_json, iso, kp_required,
+                    load_json, mag_lat, parse_utc, save_json, sun_alt, utcnow)
 
 DASHBOARD = "https://zoltanhorogh.github.io/aurora/"
 SWPC = "https://services.swpc.noaa.gov"
@@ -32,9 +35,14 @@ OVATION_NORTH_MIN = 40   # ... or strong oval within view to the north
 BZ_SOUTH = -5            # nT, 30-min mean
 COOLDOWN_MIN = 90
 BRIEFING_HOURS = (17, 19)
+MAG_STRONG_SWING = 200   # nT, last-hour swing at the nearby FMI magnetometer
+MAG_STRONG_DROP = -100   # nT within 10 minutes
+MAG_NEAR_KM = 300
+TEST_MAX_PER_NIGHT = 2
 
 
-def live_readings(lat, lon):
+def global_readings():
+    """Readings that are the same everywhere: Kp, Hp30, solar wind, the OVATION grid."""
     out = {}
     try:
         kp = http_get_json(f"{SWPC}/json/planetary_k_index_1m.json")
@@ -69,10 +77,19 @@ def live_readings(lat, lon):
     except Exception as e:
         out["speed_error"] = str(e)
     try:
-        ov = http_get_json(f"{SWPC}/json/ovation_aurora_latest.json")
+        out["ovation_grid"] = http_get_json(f"{SWPC}/json/ovation_aurora_latest.json")["coordinates"]
+    except Exception as e:
+        out["ovation_error"] = str(e)
+    return out
+
+
+def local_readings(g, lat, lon):
+    """Readings for one place: OVATION overhead / to the north, and the cloud cover right now."""
+    out = {}
+    if g.get("ovation_grid"):
         lon360 = lon % 360
         local = north = 0
-        for glon, glat, p in ov["coordinates"]:
+        for glon, glat, p in g["ovation_grid"]:
             dlon = min(abs(glon - lon360), 360 - abs(glon - lon360))
             if dlon <= 1 and abs(glat - lat) <= 1:
                 local = max(local, p)
@@ -80,8 +97,6 @@ def live_readings(lat, lon):
                 north = max(north, p)
         out["ovation_local"] = local
         out["ovation_north"] = north
-    except Exception as e:
-        out["ovation_error"] = str(e)
     try:
         # MET Norway's 2.5 km model is the best short-range cloud source along the Norwegian coast.
         met = http_get_json(f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2f}&lon={lon:.2f}")
@@ -102,6 +117,97 @@ def live_readings(lat, lon):
         except Exception as e:
             out["cloud_error"] = str(e)
     return out
+
+
+def live_readings(lat, lon):
+    g = global_readings()
+    return {**{k: v for k, v in g.items() if k != "ovation_grid"}, **local_readings(g, lat, lon)}
+
+
+def judge(lv, req):
+    """(activity good enough to go out, strong) for a place that needs Kp `req`."""
+    kp, bz, hp30 = lv.get("kp", 0), lv.get("bz30", 0), lv.get("hp30", 0)
+    ov_l, ov_n = lv.get("ovation_local", 0), lv.get("ovation_north", 0)
+    activity_ok = (ov_l >= OVATION_LOCAL_MIN
+                   or (ov_n >= OVATION_NORTH_MIN and kp >= req)
+                   or (kp >= req + 1 and bz <= BZ_SOUTH)
+                   or hp30 >= req + 1.5)
+    strong = ov_l >= 50 or kp >= req + 3 or hp30 >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
+    return activity_ok, strong
+
+
+def mag_near(lat, lon, now):
+    """Fresh reading of the nearest FMI magnetometer (data/mag.json, written just before by mag_log.py)."""
+    mag = load_json(DATA / "mag.json", {}) or {}
+    best = None
+    for st in (mag.get("stations") or {}).values():
+        km = haversine_km((lat, lon), (st["lat"], st["lon"]))
+        if km <= MAG_NEAR_KM and now - parse_utc(st["t"]) <= timedelta(minutes=20) and (not best or km < best[0]):
+            best = (km, st)
+    return best[1] if best else None
+
+
+def night_key(now):
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+    return (local - timedelta(days=1) if local.hour < 12 else local).date().isoformat()
+
+
+def test_season(now, route, dry):
+    """Before the cruise: watch every Norwegian port, alert on activity anywhere (clouds only reported)."""
+    stops, seen = [], set()
+    for st in route.stops[1:-1]:
+        if st["name"] not in seen:
+            seen.add(st["name"])
+            stops.append(st)
+    dark = [st for st in stops if sun_alt(now, st["lat"], st["lon"]) <= SUN_MAX]
+    if not dark:
+        print("test season: no port is dark yet")
+        return
+    g = global_readings()
+    hits = []
+    for st in dark:
+        req = kp_required(mag_lat(st["lat"], st["lon"]))
+        lv = {**{k: v for k, v in g.items() if k != "ovation_grid"}, **local_readings(g, st["lat"], st["lon"])}
+        ok, strong = judge(lv, req)
+        m = mag_near(st["lat"], st["lon"], now)
+        mag_note = ""
+        if m and (m["swing_60"] >= MAG_STRONG_SWING or m["change_10"] <= MAG_STRONG_DROP):
+            ok = strong = True
+            mag_note = f", magnetometer {m['name']} {m['change_10']:+d} nT in 10 min / {m['swing_60']} nT in 1 h"
+        print(f"test {st['name']}: req {req:.1f} ok={ok} strong={strong} cloud={lv.get('cloud')}{mag_note}")
+        if ok:
+            hits.append((st, req, lv, strong, mag_note))
+    if not hits:
+        return
+
+    state = load_json(DATA / "alert_state.json", {}) or {}
+    t = state.get("test") or {}
+    night = night_key(now)
+    if t.get("night") != night:
+        t = {"night": night, "count": 0}
+    level = "strong" if any(h[3] for h in hits) else "watch"
+    last = parse_utc(t["last_alert"]) if t.get("last_alert") else None
+    cooling = last and (now - last) < timedelta(minutes=COOLDOWN_MIN)
+    escalation = level == "strong" and t.get("last_level") == "watch"
+    if t["count"] >= TEST_MAX_PER_NIGHT or (cooling and not escalation):
+        print("test season: alert suppressed (limit / cooldown)")
+        return
+
+    lines = []
+    for st, req, lv, strong, mag_note in hits:
+        cloud = lv.get("cloud")
+        sky = ("clouds ?" if cloud is None else f"clouds {cloud}% ✓ would alert on board" if cloud <= CLOUD_MAX
+               else f"cloudy {cloud}% ✕")
+        lines.append(f"{st['name']} (needs Kp ≈{req:.1f}): {sky}{mag_note}")
+    live = [f"Kp {g['kp']:.1f}" if "kp" in g else "", f"Hp30 {g['hp30']:.1f}" if "hp30" in g else "",
+            f"Bz {g['bz30']:+.1f} nT" if "bz30" in g else "", f"wind {g['speed']} km/s" if "speed" in g else ""]
+    title = "🧪 TEST · 🔥 Strong aurora activity" if level == "strong" else "🧪 TEST · 🟢 Aurora active"
+    send(title, "\n".join(lines) + "\nLive: " + " · ".join(x for x in live if x),
+         priority=5 if level == "strong" else 4, tags=["test_tube"], dry=dry, click=DASHBOARD + "#live")
+    t.update(count=t["count"] + 1, last_alert=iso(now), last_level=level)
+    state["test"] = t
+    if not dry:
+        save_json(DATA / "alert_state.json", state)
 
 
 def tonight_link(now):
@@ -163,8 +269,11 @@ def main():
              priority=3, tags=["white_check_mark"], dry=args.dry_run)
         return
 
-    if not (route.start - timedelta(hours=6) <= now <= route.end):
-        print("outside the cruise window — nothing to do")
+    if now < route.start - timedelta(hours=6):
+        test_season(now, route, args.dry_run)
+        return
+    if now > route.end:
+        print("after the cruise — nothing to do")
         return
 
     state = load_json(DATA / "alert_state.json", {"last_alert": None, "last_level": None, "briefings": []})
@@ -192,17 +301,8 @@ def main():
         print(f"too bright (sun {sa:.1f}°) at {pos['place']}")
     else:
         lv = live_readings(pos["lat"], pos["lon"])
-        kp = lv.get("kp", 0)
-        bz = lv.get("bz30", 0)
-        ov_l = lv.get("ovation_local", 0)
-        ov_n = lv.get("ovation_north", 0)
         cloud = lv.get("cloud")
-        hp30 = lv.get("hp30", 0)
-        activity_ok = (ov_l >= OVATION_LOCAL_MIN
-                       or (ov_n >= OVATION_NORTH_MIN and kp >= req)
-                       or (kp >= req + 1 and bz <= BZ_SOUTH)
-                       or hp30 >= req + 1.5)
-        strong = ov_l >= 50 or kp >= req + 3 or hp30 >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
+        activity_ok, strong = judge(lv, req)
         # Keep a fresh Hp30 series for the dashboard's live tile (committed by the workflow).
         if lv.get("hp30_series") and not args.dry_run:
             prev = load_json(DATA / "hp30.json", {}) or {}
