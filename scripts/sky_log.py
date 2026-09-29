@@ -8,10 +8,11 @@ Output: data/sky_obs.json  {night date (local evening): {site: {"HH": {...}}}}
 """
 from datetime import timedelta
 
-from common import DATA, http_get_json, iso, load_json, parse_utc, save_json, utcnow
+from common import DATA, http_get_json, iso, load_json, parse_utc, save_json, sun_alt, utcnow
 
 BASE = "https://tromsoe-ai.cei.uec.ac.jp/~nanjo/public/aurora_alert/"
 SITES = {"tromso": "Data.json", "skibotn": "Data_skibotn.json", "kiruna": "Data_kiruna.json"}
+COORDS = {"tromso": (69.65, 18.96), "skibotn": (69.35, 20.36), "kiruna": (67.84, 20.41)}
 AURORA_KEYS = ("Arc", "Discrete", "Diffuse", "Aurora but cloudy", "Aurora but bright")
 LOCAL_OFFSET = 2
 KEEP_NIGHTS = 40
@@ -21,7 +22,7 @@ def summarize(js):
     a = js.get("Aurora", {})
     aurora = sum(a.get(k, 0) for k in AURORA_KEYS)
     return {"aurora": round(aurora), "clear": round(a.get("Clear", 0)), "cloudy": round(a.get("Cloudy", 0)),
-            "dusk": round(a.get("Dusk/Dawn", 0)),
+            "dusk": round(a.get("Dusk/Dawn", 0)), "bright": round(a.get("Aurora but bright", 0)),
             "type": max(AURORA_KEYS, key=lambda k: a.get(k, 0)) if aurora >= 50 else None}
 
 
@@ -39,8 +40,9 @@ def main():
         if now - t > timedelta(minutes=45):
             continue  # camera/AI not updating (daytime pause or outage)
         s = summarize(js)
-        if s["dusk"] >= 90:
-            continue  # daylight/twilight: nothing to learn
+        s["sun"] = round(sun_alt(t, *COORDS[site]), 1)
+        if s["dusk"] >= 90 and s["sun"] > -10:
+            continue  # real daylight/twilight: nothing to learn (a moonlit sky, also "dusk" to the AI, is kept)
         local = t + timedelta(hours=LOCAL_OFFSET)
         night = (local - timedelta(days=1) if local.hour < 12 else local).date().isoformat()
         hour = local.strftime("%H")

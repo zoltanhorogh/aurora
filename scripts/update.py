@@ -398,6 +398,16 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             p_met, met_note = 0.05, "no clear gap"
         p_clear = p_met
         cloud_source = "MET Norway"
+    elif dark:
+        # MET reaches only the first part of the night yet. A clear gap already there is real
+        # information (the clear-sky definition is met); without one, the rest of the night is unknown.
+        start = next((dark[i]["local"] for i in range(len(dark) - 1)
+                      if all(v is not None and v <= CLEAR_MAX for v in met_vals[i:i + 2])), None)
+        if start:
+            last = max(i for i, v in enumerate(met_vals) if v is not None)
+            p_met, met_note = 0.9, f"clear gap from {start} (MET reaches {dark[last]['local']} so far)"
+            p_clear = p_met
+            cloud_source = "MET Norway (partial)"
 
     best = max(dark, key=lambda r: r["p_act"]) if dark else None
     p_act = best["p_act"] if best else 0.0

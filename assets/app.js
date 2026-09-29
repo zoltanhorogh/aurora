@@ -192,14 +192,20 @@
     const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(n.lat * R) * Math.sin(la * R) + Math.cos(n.lat * R) * Math.cos(la * R) * Math.cos((n.lon - lo) * R)));
     const c = CAMS.map(([id, name, la, lo]) => ({ id, name, km: km(la, lo) })).sort((a, b) => a.km - b.km)[0];
     const hrs = c.km <= 250 && SKY && SKY.nights && SKY.nights[n.date] && SKY.nights[n.date][c.id];
-    return hrs ? { name: c.name, hrs, aurora: Object.keys(hrs).filter((h) => hrs[h].aurora >= 50).sort((a, b) => ((+a + 12) % 24) - ((+b + 12) % 24)) } : null;
+    const pick = (w) => Object.keys(hrs).filter((h) => camWord(hrs[h]) === w).sort(hourOrder);
+    return hrs ? { name: c.name, hrs, aurora: pick('aurora'), possible: pick('possible aurora') } : null;
   }
   const span = (arr) => (arr.length ? `${arr[0]}–${arr[arr.length - 1]}` : '');
+  // One word for an hour of the camera AI log ("bright" = moonlit sky the AI calls dusk/dawn).
+  const camWord = (v) => (v.aurora >= 50 ? 'aurora' : (v.bright || 0) >= 30 ? 'possible aurora' : v.dusk >= 50 ? 'bright (moon)'
+    : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed');
+  const hourOrder = (a, b) => ((+a + 12) % 24) - ((+b + 12) % 24);
   function pastSummary(n) {
     const rec = LOG && LOG.nights && LOG.nights[n.date];
     const o = rec && rec.observed, f = rec && rec.forecast, cam = camNear(n);
     let head, cls;
     if (cam && cam.aurora.length) [head, cls] = [`Aurora seen ${span(cam.aurora.map((h) => h + ':00'))}`, 'ok'];
+    else if (cam && cam.possible.length) [head, cls] = [`Possible aurora ${span(cam.possible.map((h) => h + ':00'))} (bright sky)`, 'ok'];
     else if (o && !o.clear_dark.length) [head, cls] = ['Cloudy all night', 'why'];
     else if (o && o.hp30_max_dark != null && o.hp30_max_dark >= o.kp_needed) [head, cls] = [`Clear and active: aurora likely (${span(o.clear_dark)})`, 'ok'];
     else if (o) [head, cls] = [`Clear ${o.clear_dark.length} h, but too quiet here`, 'why'];
@@ -207,7 +213,7 @@
     const lines = [
       f ? `Forecast that evening: ${pct(f.score)} ${f.rating}` : 'No evening forecast recorded',
       o ? `Hp30 max ${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} (needed ≈${o.kp_needed})` : 'MET analysis arrives in the morning',
-      cam ? `${cam.name}: ${cam.aurora.length ? 'aurora' : 'no aurora'} (${Object.keys(cam.hrs).length} h checked)` : '',
+      cam ? `${cam.name}: ${cam.aurora.length ? 'aurora' : cam.possible.length ? 'possible aurora' : 'no aurora'} (${Object.keys(cam.hrs).length} h checked)` : '',
     ].filter(Boolean);
     return { head, cls, lines, rec, o, f, cam };
   }
@@ -356,7 +362,8 @@
 
   // The robot decides whether MET Norway covers the night (80% of the dark hours); a single MET hour
   // in the evening twilight does not count.
-  const metCovers = (n) => n.clear.source === 'MET Norway';
+  const metCovers = (n) => n.clear.source.startsWith('MET Norway');
+  const metFull = (n) => n.clear.source === 'MET Norway'; // "MET Norway (partial)": only the first hours, with a clear gap
   const metFromText = (n) => (n.clear.met_from ? `${dayLabel(shipDate(n.clear.met_from).toISOString().slice(0, 10))} ≈${hm(n.clear.met_from)}` : null);
 
   // Far nights: no hourly verdicts, just the two numbers that actually mean something that far out.
@@ -372,8 +379,9 @@
 
   function hoursTable(n) {
     const hasMet = metCovers(n);
-    const rows = n.hourly.filter((h) => h.sun < -3);
-    const events = (n.events || []).filter((e) => e.kind === 'depart' || e.kind === 'arrive');
+    const rows = n.hourly.filter((h) => h.sun < -3 && (metFull(n) || h.cloud_met != null));
+    const lastT = rows.length ? rows[rows.length - 1].t : '';
+    const events = (n.events || []).filter((e) => (e.kind === 'depart' || e.kind === 'arrive') && (metFull(n) || e.t <= lastT));
     const win = hasMet ? bestWindow(n) : null;
     let html = `<div class="hr head"><span>Time</span><span>Verdict</span><span>Sky · ${hasMet ? 'MET' : 'models'}</span><span class="kp">Kp fc ≥ need</span></div>`;
     const evRow = (e) => `<div class="ev">${evIcon(e.kind)}${esc(e.label)} ${e.local}</div>`;
@@ -389,13 +397,15 @@
       html += `<div class="hr ${cls} ${met ? '' : 'lowskill'}"><span class="tm">${h.local}</span><span class="st ${cls}">${lab}</span>${cell}<span class="kp">${right}</span></div>`;
     });
     html += events.map(evRow).join('');
+    if (hasMet && !metFull(n)) html += `<div class="ev">⏳ Later hours: MET Norway reaches them ${metFromText(n) ? `from ${metFromText(n)} ship time` : 'in a later run'}</div>`;
     // Before MET covers the night the global models have no skill hour by hour: show no hour rows.
     if (!hasMet) return `<h3 style="margin-top:16px">Hour by hour</h3>${sunStrip(n)}${farSummary(n)}`;
     const body = `
       ${win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>` : '<div class="win none">No good window tonight.</div>'}
       <div class="hours2">${html}</div>
       <div class="srcline">Cloud source for this night: ${hasMet
-        ? '<b>MET Norway (2.5 km local model) only</b>. The global models are not used once MET covers the night.'
+        ? (metFull(n) ? '<b>MET Norway (2.5 km local model) only</b>. The global models are not used once MET covers the night.'
+          : '<b>MET Norway (2.5 km local model)</b> for the first hours, which already show a clear gap, so the night counts as clear. The later hours follow in a later run.')
         : '<b>global models + October climate</b> (hourly rows: model average, likely range in brackets). MET Norway takes over about 2.5 days before.'}</div>
       <div class="hint">Sky: Clear ≤40% cloud · Broken 40–70% · Overcast &gt;70%. The white mark on each bar is the 40% line.
         <span class="st go">GO</span> dark, activity chance ≥50% and cloud ≤40% ·
@@ -419,7 +429,7 @@
     const camCell = (hm) => {
       if (!s.cam) return '';
       const v = s.cam.hrs[hm.slice(0, 2)];
-      return `<td>${!v ? '–' : v.aurora >= 50 ? '<span class="ok">aurora</span>' : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed'}</td>`;
+      return `<td>${!v ? '–' : camWord(v).includes('aurora') ? `<span class="ok">${camWord(v)}</span>` : camWord(v)}</td>`;
     };
     return `
       <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
@@ -449,7 +459,7 @@
         <div>${factorRows(n)}<ul class="notes" style="margin-top:10px">${n.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
         <div>
           <div class="legend">
-            <span><i style="background:#3987e5"></i>Cloud cover, MET Norway (left axis)${hasMet ? '' : ', not available yet for this night'} · below the white 40% line = clear enough</span>
+            <span><i style="background:#3987e5"></i>Cloud cover, MET Norway (left axis)${metFull(n) ? '' : hasMet ? ', first hours only so far' : ', not available yet for this night'} · below the white 40% line = clear enough</span>
             <span><i class="line" style="background:#e8743b"></i>Kp forecast (right axis)</span>
             <span><i class="line" style="background:repeating-linear-gradient(90deg,#e8743b 0 6px,transparent 6px 10px)"></i>Kp needed here · solid above dashed = strong enough</span>
             <span><i class="band"></i>Dark hours</span>
@@ -490,7 +500,7 @@
     g += '<g class="hl"></g>';
     // Cloud bars: MET Norway where available (solid), otherwise the global-model average (faded) — same as the table.
     // Before MET covers the night, no model bars at all: hour by hour they have no skill that far out.
-    const covered = metCovers(n);
+    const covered = metFull(n);
     hours.forEach((h, i) => {
       const met = h.cloud_met != null;
       const v = met ? h.cloud_met : covered ? h.cloud_mean : null;
@@ -869,17 +879,33 @@
   const AI_BASE = 'https://tromsoe-ai.cei.uec.ac.jp/~nanjo/public/aurora_alert/';
   const AI_AURORA = ['Arc', 'Discrete', 'Diffuse', 'Aurora but cloudy', 'Aurora but bright'];
   // What the camera AI sees, in plain words. `a` = its percentages.
-  function aiVerdict(a) {
+  // Sun altitude in degrees (low-precision solar position): tells real twilight from a moonlit sky.
+  function sunAltAt(t, lat, lon) {
+    const R = Math.PI / 180, d = t.getTime() / 864e5 - 10957.5; // days since J2000
+    const g = (357.529 + 0.98560028 * d) * R, q = 280.459 + 0.98564736 * d;
+    const L = (q + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * R, e = (23.439 - 3.6e-7 * d) * R;
+    const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+    const ha = (((18.697374558 + 24.06570982441908 * d) % 24) * 15 + lon) * R - ra;
+    return Math.asin(Math.sin(lat * R) * Math.sin(dec) + Math.cos(lat * R) * Math.cos(dec) * Math.cos(ha)) / R;
+  }
+
+  // The AI reads a moonlit sky as "dusk/dawn" and then hesitates about aurora ("aurora but bright").
+  function aiVerdict(a, sunAlt) {
     const aurora = AI_AURORA.reduce((s, k) => s + (a[k] || 0), 0);
     const type = AI_AURORA.reduce((b, k) => ((a[k] || 0) > (a[b] || 0) ? k : b), AI_AURORA[0]);
+    const bright = a['Aurora but bright'] || 0;
     if (aurora >= 50) return ['good', `Aurora now (${type.toLowerCase()})`, aurora];
+    if ((a['Dusk/Dawn'] || 0) >= 50 && sunAlt != null && sunAlt < -10) {
+      return ['moon', bright >= 10 ? `Possible aurora (${Math.round(bright)}%), bright sky` : 'Bright sky (moonlight)', aurora];
+    }
     if ((a['Dusk/Dawn'] || 0) >= 50) return ['day', 'Daylight / twilight', aurora];
     if ((a.Cloudy || 0) >= 50) return ['cloud', 'Cloudy', aurora];
     if ((a.Clear || 0) >= 50) return ['clear', 'Clear sky, no aurora', aurora];
-    return ['mixed', 'Mixed / uncertain', aurora];
+    return ['mixed', aurora >= 25 ? `Possible aurora (${Math.round(aurora)}%), mixed sky` : 'Mixed / uncertain', aurora];
   }
 
-  const AI_SITES = [['tromso', 'Tromsø', 'Data.json'], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json'], ['kiruna', 'Kiruna (Sweden)', 'Data_kiruna.json']];
+  const AI_SITES = [['tromso', 'Tromsø', 'Data.json', 69.65, 18.96], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json', 69.35, 20.36],
+    ['kiruna', 'Kiruna (Sweden)', 'Data_kiruna.json', 67.84, 20.41]];
   function renderCams() {
     const el = $('#cams');
     if (!el) return;
@@ -898,16 +924,16 @@
   }
 
   function loadAiChips() {
-    for (const [id, , file] of AI_SITES) {
+    for (const [id, , file, la, lo] of AI_SITES) {
       getJSON(AI_BASE + file).then((js) => {
-        const [cls, text, aurora] = aiVerdict(js.Aurora || {});
         const when = new Date(js.Time.replace(' ', 'T') + 'Z');
+        const [cls, text, aurora] = aiVerdict(js.Aurora || {}, sunAltAt(when, la, lo));
         const box = document.getElementById(`ai-${id}`);
         if (!box) return;
         box.className = `aichip ${cls}`;
         box.querySelector('.v').textContent = `AI: ${text}`;
         const paused = Date.now() - when > 45 * 60000;
-        box.querySelector('.s').textContent = `aurora ${Math.round(aurora)}% · clear ${Math.round(js.Aurora.Clear || 0)}% · cloudy ${Math.round(js.Aurora.Cloudy || 0)}% · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}`;
+        box.querySelector('.s').textContent = `aurora ${Math.round(aurora)}% · clear ${Math.round(js.Aurora.Clear || 0)}% · cloudy ${Math.round(js.Aurora.Cloudy || 0)}% · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}${cls === 'moon' ? ' · the AI is unsure in moonlight: look at the picture' : ''}`;
       }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; });
     }
   }
@@ -1186,12 +1212,15 @@
       const site = r.spot === 'Tromsø' ? 'tromso' : 'skibotn';
       const hrs = SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date][site];
       if (!hrs) return '<span class="why">–</span>';
-      const list = Object.entries(hrs).sort(([a], [b]) => ((+a + 12) % 24) - ((+b + 12) % 24));
-      const aur = list.filter(([, v]) => v.aurora >= 50).map(([h]) => `${h}:00`);
-      const clear = list.filter(([, v]) => v.clear >= 50).length;
+      const list = Object.entries(hrs).sort(([a], [b]) => hourOrder(a, b));
+      const hoursOf = (w) => list.filter(([, v]) => camWord(v) === w).map(([h]) => `${h}:00`);
+      const aur = hoursOf('aurora'), poss = hoursOf('possible aurora');
+      const clear = hoursOf('clear').length, moon = hoursOf('bright (moon)').length;
       const label = site === 'skibotn' ? '<span class="why"> (Skibotn cam)</span>' : '';
-      if (aur.length) return `<span class="ok">✓ aurora</span> ${aur[0]}${aur.length > 1 ? `–${aur[aur.length - 1]}` : ''} <span class="why">(${aur.length} h)</span>${label}`;
+      if (aur.length) return `<span class="ok">✓ aurora</span> ${span(aur)} <span class="why">(${aur.length} h)</span>${label}`;
+      if (poss.length) return `<span class="ok">possible aurora</span> ${span(poss)} <span class="why">(bright sky, ${poss.length} h)</span>${label}`;
       if (clear) return `clear, no aurora <span class="why">(${clear} h)</span>${label}`;
+      if (moon * 2 >= list.length) return `bright sky (moon), AI unsure <span class="why">(${moon} h)</span>${label}`;
       return `cloudy <span class="why">(${list.length} h checked)</span>${label}`;
     };
     const row = (r) => {
