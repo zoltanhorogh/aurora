@@ -587,7 +587,7 @@
     if (!(sw.kp_3day || []).length) { el.innerHTML = '<div class="empty">3-day forecast unavailable.</div>'; return; }
     el.innerHTML = `
       <h3>Kp: last week &amp; NOAA 3-day forecast</h3>
-      <div class="legend"><span><i style="background:#3987e5"></i>Observed / estimated</span><span><i style="background:rgba(57,135,229,.3);border:1.5px solid #3987e5"></i>Forecast</span></div>
+      <div class="legend"><span><i style="background:#3987e5"></i>Observed / estimated</span><span><i style="background:rgba(57,135,229,.3);border:1.5px solid #3987e5"></i>Forecast</span><span><i style="background:#f2c230;border-radius:50%"></i>Measured Hp30 (half-hourly)</span></div>
       <div class="chart" id="kp3-chart"></div>
       <div class="hint">${esc(sw.three_day.summary || '')} ${sw.three_day.rationale ? '<br>NOAA: ' + esc(sw.three_day.rationale) : ''}</div>`;
     drawKp3();
@@ -613,12 +613,23 @@
       }
     });
     g += kpRefLines(y, ml, ml + pw);
+    // Measured half-hourly Hp30 as dots: short substorm peaks that the 3-hour Kp smooths out.
+    const T0 = new Date(rows[0].t).getTime();
+    const hpMap = new Map([...(D.space_weather.hp30_week || []), ...(HP30 || [])]);
+    const hp = [...hpMap.entries()].map(([ts, v]) => [new Date(ts).getTime(), v]).sort((a, b) => a[0] - b[0]);
+    for (const [t, v] of hp) {
+      const cx = ml + ((t + 900e3 - T0) / 10800e3) * bw;
+      if (cx >= ml && cx <= ml + pw) g += `<circle cx="${cx.toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.2" fill="#f2c230"/>`;
+    }
     cont.innerHTML = svgTag(W, H, '3-hourly Kp', g);
     const hl = cont.querySelector('.hl');
     const bands = rows.map((_, i) => [ml + i * bw, ml + (i + 1) * bw]);
     bindHover(cont, W, bands, (i) => {
       const r = rows[i];
-      return `<b>${dayLabel(r.t.slice(0, 10))} ${r.t.slice(11, 16)}–${pad((+r.t.slice(11, 13) + 3) % 24)}:00 UTC</b><div class="row"><span>Kp (${esc(r.kind)})</span><span>${r.kp.toFixed(2)}</span></div>`;
+      const a = new Date(r.t).getTime();
+      const inBlock = hp.filter(([t]) => t >= a && t < a + 10800e3).map((p) => p[1]);
+      return `<b>${dayLabel(r.t.slice(0, 10))} ${r.t.slice(11, 16)}–${pad((+r.t.slice(11, 13) + 3) % 24)}:00 UTC</b><div class="row"><span>Kp (${esc(r.kind)})</span><span>${r.kp.toFixed(2)}</span></div>`
+        + (inBlock.length ? `<div class="row"><span>Hp30 measured, max</span><span>${Math.max(...inBlock).toFixed(1)}</span></div>` : '');
     }, (i) => hlBand(hl, bands, i, mt, ph));
   }
 
@@ -638,12 +649,12 @@
   const setTile = (id, v, sub) => { const e = document.getElementById(id); if (e) { e.querySelector('.v').innerHTML = v; e.querySelector('.s').innerHTML = sub; } };
 
   // Kp level needed for aurora overhead at the ship (same rule as the pipeline).
-  function liveNeed() {
-    const s = shipNow();
+  function kpNeedAt(lat, lon) {
     const R = Math.PI / 180;
-    const mlat = Math.asin(Math.sin(s.lat * R) * Math.sin(80.8 * R) + Math.cos(s.lat * R) * Math.cos(80.8 * R) * Math.cos((s.lon + 72.6) * R)) / R;
+    const mlat = Math.asin(Math.sin(lat * R) * Math.sin(80.8 * R) + Math.cos(lat * R) * Math.cos(80.8 * R) * Math.cos((lon + 72.6) * R)) / R;
     return Math.max(0, Math.min(9, (67.5 - mlat) / 1.8 + 0.5));
   }
+  const liveNeed = () => { const s = shipNow(); return kpNeedAt(s.lat, s.lon); };
 
   // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
   const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
@@ -700,6 +711,7 @@
     if (mag) MAG = mag;
     updateHp30Tile();
     updateMagTile();
+    safe(drawMagChart);
   }
 
   function refreshOvation() {
@@ -835,8 +847,91 @@
       <div class="daytabs">${sites.map(([id, name]) => `<button class="btn ${id === magSite ? 'on' : ''}" data-m="${id}">${name}</button>`).join('')}</div>
       <a href="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" target="_blank" rel="noopener"><img class="magimg" src="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif?t=${Date.now()}" data-live="https://flux.phys.uit.no/Last24/Last24_${magSite}.gif" alt="Magnetogram, last 24 hours" loading="lazy"></a>
       <p class="hint"><b>How to read it:</b> look at the <b style="color:#6da7ec">blue line</b> (horizontal field). Flat or gently wavy = quiet. A <b>sudden dip of 50+ nT</b> within minutes = a substorm, aurora is active over that area now; <b>200+ nT</b> = strong display. The time axis is UTC: add 2 hours for ship time. Updates every few minutes. Source: Tromsø Geophysical Observatory (UiT).</p>
+      <div class="ailabel" style="margin-top:14px">Nearby Finnish station and Hp30, ship time</div>
+      <div class="chart" id="mag-chart"></div>
+      <p class="hint" id="mag-chart-note"></p>
       <p class="hint">Direct links, if the picture above does not load: <a href="https://flux.phys.uit.no/Last24/Last24_tro2a.gif" target="_blank" rel="noopener">Tromsø magnetogram</a> · <a href="https://flux.phys.uit.no/Last24/Last24_sor1a.gif" target="_blank" rel="noopener">Sørøya magnetogram</a> · <a href="https://flux.phys.uit.no/stackplot/" target="_blank" rel="noopener">all stations on one chart</a> · <a href="https://flux.phys.uit.no/Last24/" target="_blank" rel="noopener">TGO realtime page</a></p>`;
     el.querySelectorAll('.daytabs button').forEach((b) => b.addEventListener('click', () => { magSite = b.dataset.m; renderMag(); }));
+    drawMagChart();
+  }
+
+  // Our own chart next to the TGO picture: the FMI station near the chosen site (Kilpisjärvi for Tromsø,
+  // Masi for Sørøya/Alta) and, on the same ship-time axis, the half-hourly planetary Hp30.
+  function drawMagChart() {
+    const cont = $('#mag-chart');
+    if (!cont) return;
+    const code = magSite === 'tro2a' ? 'KIL' : 'MAS';
+    const st = MAG && MAG.stations && MAG.stations[code];
+    const t1 = Date.now(), t0 = t1 - 24 * 3600e3;
+    const W = widthOf(cont), ml = 40, mr = 8, mt = 8, h1 = 150, gap = 28, h2 = 70, mb = 24;
+    const H = mt + h1 + gap + h2 + mb, pw = W - ml - mr, top2 = mt + h1 + gap;
+    const x = (t) => ml + ((t - t0) / (t1 - t0)) * pw;
+
+    const pts = [];
+    if (st && st.series) {
+      const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
+      st.series.dev.forEach((v, i) => { const t = s0 + i * step; if (t >= t0 && t <= t1) pts.push([t, v]); });
+    }
+    const vals = pts.filter((p) => p[1] != null).map((p) => p[1]);
+    const lo = Math.min(-150, Math.floor((Math.min(0, ...vals) - 10) / 50) * 50);
+    const hi = Math.max(50, Math.ceil((Math.max(0, ...vals) + 10) / 50) * 50);
+    const y1 = (v) => mt + ((hi - v) / (hi - lo)) * h1;
+    const stepV = hi - lo > 400 ? 100 : 50;
+    const ticks = [];
+    for (let v = Math.ceil(lo / stepV) * stepV; v <= hi; v += stepV) ticks.push(v);
+    let g = gridY(y1, ml, ml + pw, ticks, (v) => v);
+    g += `<line x1="${ml}" x2="${ml + pw}" y1="${y1(0)}" y2="${y1(0)}" stroke="#555"/>`;
+    for (const [v, col, lab] of [[-50, '#f2c230', '−50: active'], [-200, '#1faa59', '−200: strong']]) {
+      if (v < lo) continue;
+      g += `<line x1="${ml}" x2="${ml + pw}" y1="${y1(v)}" y2="${y1(v)}" stroke="${col}" stroke-dasharray="4 4" opacity="0.8"/>`;
+      g += `<text class="ref" x="${ml + pw - 2}" y="${y1(v) - 4}" text-anchor="end">${lab}</text>`;
+    }
+    g += `<text class="lbl" x="${ml + 4}" y="${mt + 12}">${st ? esc(st.name) : 'Magnetometer'}: nT vs quiet level</text>`;
+    let seg = [];
+    const flush = () => { if (seg.length > 1) g += `<polyline points="${seg.join(' ')}" fill="none" stroke="#3987e5" stroke-width="1.6" stroke-linejoin="round"/>`; seg = []; };
+    for (const [t, v] of pts) { if (v == null) flush(); else seg.push(`${x(t).toFixed(1)},${y1(v).toFixed(1)}`); }
+    flush();
+
+    const need = magSite === 'tro2a' ? kpNeedAt(69.65, 18.96) : kpNeedAt(69.98, 23.25); // the station's area, not the ship
+    const hp = (HP30 || []).map(([ts, v]) => [new Date(ts).getTime(), v]).filter(([t]) => t >= t0 - 1800e3 && t <= t1);
+    const hmax = Math.max(4, Math.ceil(Math.max(need, ...hp.map((p) => p[1])) + 0.5));
+    const y2 = (v) => top2 + h2 - (Math.min(v, hmax) / hmax) * h2;
+    g += gridY(y2, ml, ml + pw, [0, Math.round(hmax / 2), hmax], (v) => v);
+    const bw = (pw / 48) * 0.72;
+    for (const [t, v] of hp) {
+      const cx = x(t + 900e3);
+      if (cx < ml || cx > ml + pw) continue;
+      g += `<path d="${roundTopBar(cx - bw / 2, y2(v), bw, y2(0) - y2(v), 2)}" fill="${v >= need ? '#1faa59' : '#3987e5'}"/>`;
+    }
+    g += `<line x1="${ml}" x2="${ml + pw}" y1="${y2(need)}" y2="${y2(need)}" stroke="#f2c230" stroke-dasharray="4 4"/>`;
+    g += `<text class="ref" x="${ml + pw - 2}" y="${y2(need) - 4}" text-anchor="end">needed in ${magSite === 'tro2a' ? 'Tromsø' : 'Alta'} ≈${need.toFixed(1)}</text>`;
+    g += `<text class="lbl" x="${ml + 4}" y="${top2 - 6}">Hp30 (planetary, half-hourly)</text>`;
+
+    for (let t = Math.ceil(t0 / 3600e3) * 3600e3; t <= t1; t += 3600e3) {
+      if (shipDate(t).getUTCHours() % 3) continue;
+      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${mt}" y2="${top2 + h2}" stroke="#2c2c2a"/>`;
+      g += `<text x="${x(t)}" y="${H - 6}" text-anchor="middle">${hm(t)}</text>`;
+    }
+    g += '<g class="hl"></g>';
+    cont.innerHTML = svgTag(W, H, 'Local magnetometer and Hp30, last 24 hours', g);
+
+    // Hover: half-hour slots with the magnetometer low point and the Hp30 value.
+    const slots = [];
+    for (let t = Math.floor(t0 / 1800e3) * 1800e3; t < t1; t += 1800e3) slots.push(t);
+    const bands = slots.map((t) => [Math.max(ml, x(t)), Math.min(ml + pw, x(t + 1800e3))]);
+    const hl = cont.querySelector('.hl');
+    bindHover(cont, W, bands, (i) => {
+      const a = slots[i], b = a + 1800e3;
+      const m = pts.filter(([t, v]) => t >= a && t < b && v != null).map((p) => p[1]);
+      const h = hp.find(([t]) => t === a);
+      return `<b>${hm(a)}–${hm(b)}</b><div class="row"><span>Magnetometer low</span><span>${m.length ? Math.min(...m) + ' nT' : '–'}</span></div>`
+        + `<div class="row"><span>Hp30</span><span>${h ? h[1].toFixed(1) : '–'}</span></div>`;
+    }, (i) => hlBand(hl, bands, i, mt, top2 + h2 - mt));
+
+    const lastT = st && st.t ? new Date(st.t) : null;
+    $('#mag-chart-note').innerHTML = `Top: the horizontal magnetic field at ${st ? esc(st.name) : 'the nearby station'} (FMI) compared with its quiet level: a drop below −50 nT = aurora active overhead, below −200 nT = strong. Bottom: Hp30, the same kind of measurement averaged over the whole planet, with the level needed in that area.`
+      + (!st ? ' <b>No magnetometer data yet</b> (the robot logs it after dark).'
+        : t1 - lastT > 40 * 60e3 ? ` The line ends at ${hm(lastT)}: the robot logs it after dark only.` : '');
   }
 
   // Collapsed extra: the same "overhead now" numbers for every port and every at-sea night position.
@@ -1242,6 +1337,11 @@
 
   // ------------------------------------------------------------ nav highlight
   function navSpy() {
+    $('#home').addEventListener('click', (ev) => {
+      ev.preventDefault();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      history.replaceState(null, '', location.pathname + location.search);
+    });
     const links = [...document.querySelectorAll('#tabs a')];
     const obs = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
@@ -1289,7 +1389,7 @@
         lastW = window.innerWidth;
         const n = D.nights.find((x) => x.date === selected);
         [() => drawHourly(n, $('#hourly-chart')), () => drawHourly(checkNight(), $('#check-chart')),
-          () => HIST && drawTrend(HIST.runs), drawKp27, drawKp3, drawBz].forEach(safe);
+          () => HIST && drawTrend(HIST.runs), drawKp27, drawKp3, drawBz, drawMagChart].forEach(safe);
       }, 200);
     });
   }

@@ -6,17 +6,19 @@ every 10 min and writes data/mag.json. Only in the dark at Tromsø: in daylight 
 
 Stations near the route: Kilpisjärvi (~100 km from Tromsø) and Masi (~70 km south of Alta).
 Swing = max − min of the horizontal field (nT); a substorm (active aurora overhead) shows as a sudden dip.
-Output: data/mag.json  {"updated": ..., "stations": {"KIL": {...}, "MAS": {...}}}
+Also a 24 h series for the dashboard chart: 2-minute means relative to the 24 h median ("quiet level").
+Output: data/mag.json  {"updated": ..., "stations": {"KIL": {..., "series": {"t0", "step_min", "dev"}}, "MAS": {...}}}
 """
 import math
 from datetime import datetime, timedelta, timezone
 
 from common import DATA, http_get, iso, save_json, sun_alt, utcnow
 
-BASE = "https://space.fmi.fi/image/realtime/UT/{s}/{s}data_01.txt"
+BASE = "https://space.fmi.fi/image/realtime/UT/{s}/{s}data_24.txt"
 STATIONS = {"KIL": ("Kilpisjärvi", 69.02, 20.79), "MAS": ("Masi", 69.46, 23.70)}
 TROMSO = (69.65, 18.96)
 DARK_SUN_ALT = -3  # degrees; a little before nautical twilight is enough to start logging
+STEP_MIN = 2
 
 
 def parse(text):
@@ -47,6 +49,18 @@ def summarize(rows):
             "change_10": round(last_h - ten[0][1])}  # negative = field dropping (typical substorm dip)
 
 
+def series(rows):
+    """2-minute means of H minus the 24 h median; None where data is missing."""
+    quiet = sorted(h for _, h in rows)[len(rows) // 2]
+    t0 = rows[0][0].replace(minute=rows[0][0].minute - rows[0][0].minute % STEP_MIN, second=0)
+    bins = {}
+    for t, h in rows:
+        bins.setdefault(int((t - t0).total_seconds() // (STEP_MIN * 60)), []).append(h)
+    n = max(bins) + 1
+    dev = [round(sum(bins[i]) / len(bins[i]) - quiet) if i in bins else None for i in range(n)]
+    return {"t0": iso(t0), "step_min": STEP_MIN, "dev": dev}
+
+
 def main():
     now = utcnow()
     if sun_alt(now, *TROMSO) > DARK_SUN_ALT:
@@ -62,8 +76,8 @@ def main():
         if len(rows) < 30:
             print(code, "too few samples:", len(rows))
             continue
-        out["stations"][code] = {"name": name, "lat": lat, "lon": lon, **summarize(rows)}
-        print(code, out["stations"][code])
+        out["stations"][code] = {"name": name, "lat": lat, "lon": lon, **summarize(rows), "series": series(rows)}
+        print(code, {k: v for k, v in out["stations"][code].items() if k != "series"})
     if out["stations"]:
         save_json(DATA / "mag.json", out, compact=True)
 

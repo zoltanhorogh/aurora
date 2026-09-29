@@ -113,8 +113,8 @@ def fetch_daily_indices():
 
 
 @source("gfz_hp30")
-def fetch_hp30_24h(now):
-    return [[iso(t), v] for t, v in fetch_hp30(now - timedelta(hours=24), now)]
+def fetch_hp30_since(start, now):
+    return [[iso(t), v] for t, v in fetch_hp30(start, now)]
 
 
 @source("nasa_donki_cme")
@@ -585,7 +585,9 @@ def main():
     nights = [score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
     update_verification(now, mc)
-    hp30 = fetch_hp30_24h(now) or []
+    # Measured Hp30 over the whole Kp chart (last week), drawn over NOAA's 3-hourly Kp; the last 24 h feed the live tile.
+    hp30_week = fetch_hp30_since(parse_utc(kp3[0]["t"]) if kp3 else now - timedelta(days=7), now) or []
+    hp30 = [p for p in hp30_week if parse_utc(p[0]) >= now - timedelta(hours=24)]
 
     # Hourly route for the live view.
     t = route.start - timedelta(hours=1)
@@ -621,6 +623,7 @@ def main():
             "recurrence": recurrence,
             "cmes": cmes,
             "hp30": hp30,
+            "hp30_week": hp30_week,
         },
         "nights": nights,
         "model_check": mc,
