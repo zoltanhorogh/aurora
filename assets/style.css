@@ -232,6 +232,15 @@ div.why { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .wx-sum { font-size: 13px; color: var(--text-2); margin: 6px 0; }
 .wx-sea { font-size: 13px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin: 10px 0; }
 .wx-now, .spot { border-top: 1px solid var(--border); padding: 8px 0; }
+.wx-now { border: 1px solid rgba(62, 224, 143, 0.35); background: rgba(62, 224, 143, 0.06); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.wx-now > summary { font-size: 14px; color: var(--text); }
+/* Every dropdown: no browser triangle, a clear pill on the right that says what a tap does */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after { content: 'Show ▾'; float: right; margin-left: 10px; font-size: 11px; font-weight: 600; color: var(--aurora);
+  border: 1px solid rgba(62, 224, 143, 0.45); border-radius: 999px; padding: 1px 9px; line-height: 1.6; white-space: nowrap; }
+details[open] > summary::after { content: 'Hide ▴'; color: var(--text-2); border-color: var(--border); }
+details > summary:hover::after { background: rgba(62, 224, 143, 0.12); }
 .wx-now summary, .spot summary { cursor: pointer; font-size: 13px; color: var(--text-2); line-height: 1.5; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .achip { font-size: 12px; color: var(--text); background: rgba(57, 135, 229, 0.14); border: 1px solid rgba(57, 135, 229, 0.4); border-radius: 999px; padding: 2px 9px; }

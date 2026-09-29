@@ -197,7 +197,7 @@
       selected = b.dataset.date;
       renderCards();
       renderDetail();
-      $('#night-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'smooth' });
     }));
   }
 
@@ -323,7 +323,7 @@
   function farSummary(n) {
     const c = n.clear;
     return `
-      <div class="win none">Verdicts (GO / TRY / NO) appear when MET Norway's local model reaches this night, about 2.5 days before it${metFromText(n) ? `: <b>expected from ${metFromText(n)} ship time</b>` : ''}. Until then the table below shows what the global models say, for orientation only.</div>
+      <div class="win none">Verdicts (GO / TRY / NO) appear when MET Norway's local model reaches this night, about 2.5 days before it${metFromText(n) ? `: <b>expected from ${metFromText(n)} ship time</b>` : ''}. Hour-by-hour cloud from the global models has no real skill this far out, so it is not shown; the two numbers below are what they can tell.</div>
       <div class="farbox">
         <div class="fb"><div class="k">Typical October night here</div><div class="v">${c.clim_mean_cloud != null ? Math.round(c.clim_mean_cloud) + '% cloud' : '–'}</div><div class="s">average in the dark hours (clear line: 40%) · a 2+ hour gap under 40% in ${pct(c.p_clim)} of nights (2011–2025)</div></div>
         <div class="fb"><div class="k">Global weather models so far</div><div class="v">${c.p_ens != null ? pct(c.p_ens) + ' of runs' : 'not yet'}</div><div class="s">${c.p_ens != null ? `show a 2+ hour gap under 40% (${c.members} runs, ${c.models.join(' + ')}) · low skill this far out` : 'no model reaches this night yet'}</div></div>
@@ -349,8 +349,10 @@
       html += `<div class="hr ${cls} ${met ? '' : 'lowskill'}"><span class="tm">${h.local}</span><span class="st ${cls}">${lab}</span>${cell}<span class="kp">${right}</span></div>`;
     });
     html += events.map(evRow).join('');
+    // Before MET covers the night the global models have no skill hour by hour: show no hour rows.
+    if (!hasMet) return `<h3 style="margin-top:16px">Hour by hour</h3>${sunStrip(n)}${farSummary(n)}`;
     const body = `
-      ${hasMet ? (win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>` : '<div class="win none">No good window tonight.</div>') : farSummary(n)}
+      ${win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>` : '<div class="win none">No good window tonight.</div>'}
       <div class="hours2">${html}</div>
       <div class="srcline">Cloud source for this night: ${hasMet
         ? '<b>MET Norway (2.5 km local model) only</b>. The global models are not used once MET covers the night.'
@@ -381,13 +383,13 @@
         <div>${factorRows(n)}<ul class="notes" style="margin-top:10px">${n.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
         <div>
           <div class="legend">
-            <span><i style="background:#3987e5${hasMet ? '' : ';opacity:.35'}"></i>Cloud cover, ${hasMet ? 'MET Norway' : 'global models (low skill)'} (left axis) · below the white 40% line = clear enough</span>
+            <span><i style="background:#3987e5"></i>Cloud cover, MET Norway (left axis)${hasMet ? '' : ', not available yet for this night'} · below the white 40% line = clear enough</span>
             <span><i class="line" style="background:#e8743b"></i>Kp forecast (right axis)</span>
             <span><i class="line" style="background:repeating-linear-gradient(90deg,#e8743b 0 6px,transparent 6px 10px)"></i>Kp needed here · solid above dashed = strong enough</span>
             <span><i class="band"></i>Dark hours</span>
           </div>
           <div class="chart" id="${chartId}"></div>
-          ${hasMet ? '' : '<div class="hint">Faded bars = global models, for orientation only. MET Norway\'s local model replaces them about 2.5 days before the night.</div>'}
+          ${hasMet ? '' : '<div class="hint">Cloud bars appear when MET Norway\'s local model reaches this night (see Hour by hour below). The Kp lines are already meaningful.</div>'}
           <div class="hint">Times are ship time (UTC+2). <b>Kp forecast</b> = expected geomagnetic activity (0–9). <b>Kp needed</b> = the level at which aurora is clearly visible where the ship is at that hour (higher the further south). <b>Activity chance</b> = probability that the real Kp reaches the needed level, allowing for forecast error. At midnight: ${kpNeedText(n.kp_req)}.</div>
         </div>
       </div>
@@ -420,10 +422,12 @@
     g += `<text x="${ml - 6}" y="${mt - 8}" text-anchor="end" style="fill:${CLOUD_C}">Cloud</text>`;
     g += `<text x="${W - mr + 6}" y="${mt - 8}" style="fill:${KP_C}">Kp</text>`;
     g += '<g class="hl"></g>';
-    // Cloud bars: MET Norway where available (solid), otherwise the global-model average (faded) — same as the table
+    // Cloud bars: MET Norway where available (solid), otherwise the global-model average (faded) — same as the table.
+    // Before MET covers the night, no model bars at all: hour by hour they have no skill that far out.
+    const covered = metCovers(n);
     hours.forEach((h, i) => {
       const met = h.cloud_met != null;
-      const v = met ? h.cloud_met : h.cloud_mean;
+      const v = met ? h.cloud_met : covered ? h.cloud_mean : null;
       if (v == null) return;
       const cx = ml + i * bw + bw / 2, w = Math.max(5, bw * 0.46);
       g += `<path d="${roundTopBar(cx - w / 2, y(v), w, y(0) - y(v))}" fill="#3987e5" opacity="${met ? 1 : 0.35}"/>`;
@@ -1345,7 +1349,18 @@
   }
 
   // ------------------------------------------------------------ nav highlight
+  // The sticky header is taller on a phone (title + wrapped tab row) and changes with the content:
+  // measure it, so section jumps and anchor links land just below it instead of under it.
+  const headerOffset = () => ($('.topbar') ? $('.topbar').offsetHeight : 64) + 8;
+  function trackHeader() {
+    const set = () => { document.documentElement.style.scrollPaddingTop = headerOffset() + 'px'; };
+    set();
+    if (window.ResizeObserver && $('.topbar')) new ResizeObserver(set).observe($('.topbar'));
+    window.addEventListener('resize', set);
+  }
+
   function navSpy() {
+    trackHeader();
     $('#home').addEventListener('click', (ev) => {
       ev.preventDefault();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1385,7 +1400,7 @@
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {
       // instant jump (the CSS smooth scrolling would animate and can be interrupted); repeat once late content has loaded
-      const jump = () => window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - 70, behavior: 'instant' });
+      const jump = () => window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'instant' });
       setTimeout(jump, 250);
       setTimeout(jump, 1200);
     }
