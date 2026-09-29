@@ -165,6 +165,9 @@ def fetch_ensemble(points, d):
     return out
 
 
+MET_HOURLY_END = []  # last hourly time of each MET response this run
+
+
 @source("met_norway")
 def fetch_met(lat, lon):
     """MET Norway locationforecast: hourly cloud cover for the high-resolution (~60 h) part only."""
@@ -176,7 +179,27 @@ def fetch_met(lat, lon):
         if tb - ta != timedelta(hours=1):
             break  # beyond this point the series is 6-hourly global-model data
         out[iso(ta)] = a["data"]["instant"]["details"].get("cloud_area_fraction")
+    if out:
+        MET_HOURLY_END.append(parse_utc(max(out)))
     return out
+
+
+def met_expected(nights, now):
+    """For nights MET Norway does not cover yet: roughly when a forecast run will (MET reaches ~60 h ahead)."""
+    ends = sorted(MET_HOURLY_END)
+    reach = (ends[len(ends) // 2] - now) if ends else timedelta(hours=60)
+    for n in nights:
+        dark = [h for h in n["hourly"] if h["dark"]]
+        if n["clear"]["source"] == "MET Norway" or not dark:
+            continue
+        # covered once 80% of the dark hours are inside MET's hourly range (same rule as score_night)
+        need = parse_utc(dark[max(0, -(-len(dark) * 8 // 10) - 1)]["t"])
+        t = max(now, need - reach)
+        # forecast runs start at :17 every 3 h (UTC) and are published ~20 min later
+        run = t.replace(minute=17, second=0, microsecond=0)
+        while run < t or run.hour % 3:
+            run += timedelta(hours=1)
+        n["clear"]["met_from"] = iso(run + timedelta(minutes=20))
 
 
 def ens_weight(lead_days):
@@ -218,10 +241,12 @@ def kp_for_hour(h, kp3_map, kp27_map, daily, cmes):
         else:
             kp, sigma, src = KP_CLIMATOLOGY, 1.8, "climatology"
     for c in cmes:
-        dt = abs((parse_utc(c["arrival"]) - h).total_seconds()) / 3600
-        if dt <= 12 and c.get("kp_max"):
-            if c["kp_max"] > kp:
-                kp, sigma, src = float(c["kp_max"]), 1.5, "NASA CME model"
+        arrival = parse_utc(c["arrival"])
+        dt = (h - arrival).total_seconds() / 3600
+        # from 6 h before the modelled arrival (timing error) to 18 h after it (the storm follows the shock)
+        if -6 <= dt <= 18 and c.get("kp_max") and c["kp_max"] > kp:
+            when = (arrival + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%a %H:%M")
+            kp, sigma, src = float(c["kp_max"]), 1.5, f"NASA CME model, arrival ≈ {when} ship time"
     return kp, sigma, src
 
 
@@ -584,6 +609,7 @@ def main():
 
     nights = [score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
+    met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
     # Measured Hp30 over the whole Kp chart (last week), drawn over NOAA's 3-hourly Kp; the last 24 h feed the live tile.
     hp30_week = fetch_hp30_since(parse_utc(kp3[0]["t"]) if kp3 else now - timedelta(days=7), now) or []

@@ -295,6 +295,7 @@
   }
 
   function bestWindow(n) {
+    if (!metCovers(n)) return null;
     const st = n.hourly.map((h) => hourStatus(h)[0]);
     for (const want of ['GO', 'TRY']) {
       let best = null, i = 0;
@@ -313,11 +314,16 @@
     return null;
   }
 
+  // The robot decides whether MET Norway covers the night (80% of the dark hours); a single MET hour
+  // in the evening twilight does not count.
+  const metCovers = (n) => n.clear.source === 'MET Norway';
+  const metFromText = (n) => (n.clear.met_from ? `${dayLabel(shipDate(n.clear.met_from).toISOString().slice(0, 10))} ≈${hm(n.clear.met_from)}` : null);
+
   // Far nights: no hourly verdicts, just the two numbers that actually mean something that far out.
   function farSummary(n) {
     const c = n.clear;
     return `
-      <div class="win none">Verdicts (GO / TRY / NO) appear when MET Norway's local model reaches this night, about 2.5 days before it. Until then the table below shows what the global models say, for orientation only.</div>
+      <div class="win none">Verdicts (GO / TRY / NO) appear when MET Norway's local model reaches this night, about 2.5 days before it${metFromText(n) ? `: <b>expected from ${metFromText(n)} ship time</b>` : ''}. Until then the table below shows what the global models say, for orientation only.</div>
       <div class="farbox">
         <div class="fb"><div class="k">Typical October night here</div><div class="v">${c.clim_mean_cloud != null ? Math.round(c.clim_mean_cloud) + '% cloud' : '–'}</div><div class="s">average in the dark hours (clear line: 40%) · a 2+ hour gap under 40% in ${pct(c.p_clim)} of nights (2011–2025)</div></div>
         <div class="fb"><div class="k">Global weather models so far</div><div class="v">${c.p_ens != null ? pct(c.p_ens) + ' of runs' : 'not yet'}</div><div class="s">${c.p_ens != null ? `show a 2+ hour gap under 40% (${c.members} runs, ${c.models.join(' + ')}) · low skill this far out` : 'no model reaches this night yet'}</div></div>
@@ -325,7 +331,7 @@
   }
 
   function hoursTable(n) {
-    const hasMet = n.hourly.some((h) => h.cloud_met != null);
+    const hasMet = metCovers(n);
     const rows = n.hourly.filter((h) => h.sun < -3);
     const events = (n.events || []).filter((e) => e.kind === 'depart' || e.kind === 'arrive');
     const win = hasMet ? bestWindow(n) : null;
@@ -365,7 +371,7 @@
   // Full night view; also reused 1:1 by the model check panel.
   function detailHTML(n, chartId) {
     const hours = n.hourly;
-    const hasMet = hours.some((h) => h.cloud_met != null);
+    const hasMet = metCovers(n);
     return `
       <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">${dayLabel(n.date)} · ${esc(shortPlace(n.place))}</h3>${chip(n.rating)}
@@ -1167,7 +1173,7 @@
         ${checkNights().map((n, i) => {
           const w = bestWindow(n);
           const last = checkDay === 0 ? (nowRow(n).cloud_met != null ? Math.round(nowRow(n).cloud_met) + '%' : '–') : esc(n.clear.source);
-          return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : 'none'}</td><td>${last}</td></tr>`;
+          return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : metCovers(n) ? 'none' : `<span class="why">not yet${metFromText(n) ? ` · from ${metFromText(n)}` : ''}</span>`}</td><td>${last}</td></tr>`;
         }).join('')}
       </table></div>
       <p class="hint">Tap a row to switch spot. ${checkDay === 0 ? `*At the last update (${ago(D.generated)}); live Kp is in the Live section. ` : ''}Sources last run: ${Object.entries(D.sources).map(([k, v]) => `${esc(k)} ${v.ok ? '✓' : '✕'}`).join(' · ')}</p>
