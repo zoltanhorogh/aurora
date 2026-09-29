@@ -44,6 +44,7 @@
   let VER = null;    // verification.json
   let WX = null;     // weather.json
   let SKY = null;    // sky_obs.json (all-sky camera AI, hourly)
+  let LOG = null;    // cruise_log.json (evening forecast + what happened, per cruise night)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
   let selected = null;
@@ -181,9 +182,48 @@
   }
 
   // ------------------------------------------------------------ night cards
+  // ------------------------------------------------------------ past nights (during the cruise)
+  // A night is over at 06:00 ship time the next morning. Then its card shows what happened instead of an old forecast.
+  const isPast = (n) => Date.now() > new Date(n.date + 'T04:00:00Z').getTime() + 864e5;
+  const CAMS = [['tromso', 'Tromsø camera', 69.65, 18.96], ['skibotn', 'Skibotn camera', 69.35, 20.36], ['kiruna', 'Kiruna camera', 67.84, 20.41]];
+  // The all-sky camera near the ship that night (within 250 km), with its hourly AI log.
+  function camNear(n) {
+    const R = Math.PI / 180;
+    const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(n.lat * R) * Math.sin(la * R) + Math.cos(n.lat * R) * Math.cos(la * R) * Math.cos((n.lon - lo) * R)));
+    const c = CAMS.map(([id, name, la, lo]) => ({ id, name, km: km(la, lo) })).sort((a, b) => a.km - b.km)[0];
+    const hrs = c.km <= 250 && SKY && SKY.nights && SKY.nights[n.date] && SKY.nights[n.date][c.id];
+    return hrs ? { name: c.name, hrs, aurora: Object.keys(hrs).filter((h) => hrs[h].aurora >= 50).sort((a, b) => ((+a + 12) % 24) - ((+b + 12) % 24)) } : null;
+  }
+  const span = (arr) => (arr.length ? `${arr[0]}–${arr[arr.length - 1]}` : '');
+  function pastSummary(n) {
+    const rec = LOG && LOG.nights && LOG.nights[n.date];
+    const o = rec && rec.observed, f = rec && rec.forecast, cam = camNear(n);
+    let head, cls;
+    if (cam && cam.aurora.length) [head, cls] = [`Aurora seen ${span(cam.aurora.map((h) => h + ':00'))}`, 'ok'];
+    else if (o && !o.clear_dark.length) [head, cls] = ['Cloudy all night', 'why'];
+    else if (o && o.hp30_max_dark != null && o.hp30_max_dark >= o.kp_needed) [head, cls] = [`Clear and active: aurora likely (${span(o.clear_dark)})`, 'ok'];
+    else if (o) [head, cls] = [`Clear ${o.clear_dark.length} h, but too quiet here`, 'why'];
+    else [head, cls] = ['Result soon', 'why'];
+    const lines = [
+      f ? `Forecast that evening: ${pct(f.score)} ${f.rating}` : 'No evening forecast recorded',
+      o ? `Hp30 max ${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} (needed ≈${o.kp_needed})` : 'MET analysis arrives in the morning',
+      cam ? `${cam.name}: ${cam.aurora.length ? 'aurora' : 'no aurora'} (${Object.keys(cam.hrs).length} h checked)` : '',
+    ].filter(Boolean);
+    return { head, cls, lines, rec, o, f, cam };
+  }
+
   function renderCards() {
     const t = tonightDate();
-    $('#night-cards').innerHTML = D.nights.map((n) => `
+    $('#night-cards').innerHTML = D.nights.map((n) => isPast(n) ? (() => {
+      const s = pastSummary(n);
+      return `
+      <button class="night past ${n.date === selected ? 'sel' : ''}" data-date="${n.date}">
+        <div class="d">${dayLabel(n.date)} <span class="tag-past">PAST</span></div>
+        <div class="p">${esc(shortPlace(n.place))}</div>
+        <div class="pastres ${s.cls}">${esc(s.head)}</div>
+        <div class="mini">${s.lines.map(esc).join('<br>')}</div>
+      </button>`;
+    })() : `
       <button class="night ${n.date === selected ? 'sel' : ''} ${n.date === t ? 'tonight' : ''}" data-date="${n.date}">
         <div class="d">${dayLabel(n.date)}</div>
         ${n.mlat >= 64.5 ? '<span class="tag-arctic">ARCTIC</span>' : ''}
@@ -366,8 +406,34 @@
   function renderDetail() {
     const n = D.nights.find((x) => x.date === selected);
     if (!n) return;
+    if (isPast(n)) { $('#night-detail').innerHTML = pastDetailHTML(n); return; }
     $('#night-detail').innerHTML = detailHTML(n, 'hourly-chart');
     drawHourly(n, $('#hourly-chart'));
+  }
+
+  // A finished night: what the evening forecast said next to what happened, hour by hour.
+  function pastDetailHTML(n) {
+    const s = pastSummary(n);
+    const fc = new Map(((s.f && s.f.hours) || []).map((h) => [h[0], h[1]]));
+    const rows = s.o ? s.o.hours : [];
+    const camCell = (hm) => {
+      if (!s.cam) return '';
+      const v = s.cam.hrs[hm.slice(0, 2)];
+      return `<td>${!v ? '–' : v.aurora >= 50 ? '<span class="ok">aurora</span>' : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed'}</td>`;
+    };
+    return `
+      <div style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">${dayLabel(n.date)} · ${esc(shortPlace(n.place))}</h3><span class="tag-past">PAST</span>
+        <span class="pastres ${s.cls}" style="font-size:18px">${esc(s.head)}</span>
+      </div>
+      <p class="hint" style="margin-top:0">${s.lines.map(esc).join(' · ')}</p>
+      ${rows.length ? `<div class="tbl-wrap"><table>
+        <tr><th>Time</th><th>Forecast that evening</th><th>Cloud (MET analysis)</th><th>Hp30</th>${s.cam ? `<th>${esc(s.cam.name)} AI</th>` : ''}</tr>
+        ${rows.map((r) => `<tr class="${r[1] > -12 ? 'why' : ''}"><td>${r[0]}${r[1] > -12 ? ' <span class="why">twilight</span>' : ''}</td><td>${fc.get(r[0]) || '–'}</td>
+          <td>${r[2] <= 40 ? `<span class="ok">${r[2]}%</span>` : r[2] + '%'}</td><td>${r[3] != null ? r[3].toFixed(1) : '–'}</td>${camCell(r[0])}</tr>`).join('')}
+      </table></div>
+      <p class="hint">Cloud: MET Norway's analysis at the ship's position that hour (green = clear, ≤40%). Hp30 = planetary activity; ≈${s.o.kp_needed} was needed here. Camera AI only when an all-sky camera was within 250 km.</p>`
+        : '<div class="empty">The night is over; the hour-by-hour result appears after the next forecast run in the morning.</div>'}`;
   }
 
   // Full night view; also reused 1:1 by the model check panel.
@@ -1329,7 +1395,8 @@
          ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0(c.temp_min_mean)}–${r0(c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${kmh(c.wind_mean)} km/h, gusts up to ~${kmh(c.gust_p90)} km/h</div></div>
          <div class="fb"><div class="k">Rain or snow</div><div class="v">${Math.round(c.wet_hours_share * 100)}% of hours</div><div class="s">${c.snow_share_of_wet > 0.05 ? `${Math.round(c.snow_share_of_wet * 100)}% of those as snow/sleet` : 'almost always rain, not snow'}</div></div></div>` : ''}`;
     const sea = p.sea ? `<div class="wx-sea"><b>Water shuttle (tender), ${esc(p.sea.label)}:</b> ${p.sea.wave_max != null ? `waves up to ${r1(p.sea.wave_max)} m · sea ${r1(p.sea.sst)} °C · ${esc(p.sea.risk)}` : 'sea forecast not available for this day yet (about 8 days ahead)'}</div>` : '';
-    const now = p.now_series && p.now_series.length ? `<details class="wx-now"><summary><b>Right now at ${esc(p.name.replace(/ \((departure|arrival)\)/, ''))}:</b> next 48 hours · ${wxSummaryLine(p.now_summary)}</summary>
+    const inPort = Date.now() >= new Date(p.window[0]).getTime() - 2 * 3600e3 && Date.now() <= new Date(p.window[1]).getTime();
+    const now = !inPort && p.now_series && p.now_series.length ? `<details class="wx-now"><summary><b>Right now at ${esc(p.name.replace(/ \((departure|arrival)\)/, ''))}:</b> next 48 hours · ${wxSummaryLine(p.now_summary)}</summary>
         ${adviceChips(p.now_advice)}${wxTable(p.now_series.filter((_, i) => i % 2 === 0), lat, true)}<p class="hint">Every 2nd hour shown. This is the weather there now, not on your port day.</p></details>` : '';
     const spots = (p.spots || []).map((s) => {
       const has = s.series && s.series.length;
@@ -1384,6 +1451,7 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+      LOG = await getJSON('data/cruise_log.json').catch(() => null);
       HP30 = newerHp30((D.space_weather && D.space_weather.hp30) || [], hpFile && hpFile.series);
     } catch (e) {
       $('#fresh').innerHTML = '<span class="dot bad"></span>data unavailable';

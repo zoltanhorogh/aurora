@@ -133,6 +133,12 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 }
 .night:hover { border-color: rgba(255,255,255,.25); }
 .night.sel { border-color: var(--aurora); box-shadow: 0 0 0 1px var(--aurora) inset; }
+.night.past { background: transparent; border-style: dashed; align-content: start; }
+.night.past .p { min-height: 0; }
+.tag-past { font-size: 9px; letter-spacing: .1em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; font-weight: 600; vertical-align: middle; }
+.pastres { font-size: 15px; font-weight: 700; margin: 8px 0 4px; }
+.pastres.ok { color: var(--aurora); }
+.pastres.why { color: var(--text-2); }
 .night.tonight::after { content: "TONIGHT"; position: absolute; top: 9px; right: 9px; font-size: 9px; letter-spacing: .1em; color: var(--aurora); }
 .night .d { font-size: 12px; color: var(--text-2); font-weight: 600; }
 .night .p { font-size: 12px; color: var(--muted); line-height: 1.25; min-height: 30px; }

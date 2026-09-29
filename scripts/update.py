@@ -589,6 +589,64 @@ def update_verification(now, mc):
     save_json(DATA / "verification.json", ver, compact=True)
 
 
+# ---------------------------------------------------------------- cruise night log
+# The same idea for the cruise nights, at the ship's positions: the forecast of that evening and, once
+# the night is over, MET Norway's analysed cloud along the route and Hp30. The page shows it on past nights.
+
+@source("cruise_log")
+def update_cruise_log(now, nights, route):
+    log = load_json(DATA / "cruise_log.json", {"nights": {}}) or {"nights": {}}
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+    for n in nights:
+        d = datetime.fromisoformat(n["date"]).date()
+        rec = log["nights"].setdefault(n["date"], {"date": n["date"]})
+        if d == local.date() and local.hour < 20:
+            rec["forecast"] = {
+                "issued": iso(now), "score": n["score"], "rating": n["rating"], "place": n["place"],
+                "source": n["clear"]["source"],
+                "hours": [[h["local"], hour_verdict(h), h["cloud_met"]] for h in n["hourly"] if h["sun"] < -3],
+            }
+        if rec.get("observed") or now < datetime(d.year, d.month, d.day, 4, tzinfo=UTC) + timedelta(days=1, hours=2):
+            continue  # already done, or the night is not over yet
+        hours = night_hours(d)
+        pos = {h: route.at(h) for h in hours}
+        by_point = {}
+        for h, p in pos.items():
+            by_point.setdefault((round(p["lat"] * 4) / 4, round(p["lon"] * 4) / 4), []).append(h)
+        cloud = {}
+        nd = d + timedelta(days=1)
+        for (la, lo), hs in by_point.items():
+            wx = http_get_json("https://historical-forecast-api.open-meteo.com/v1/forecast"
+                               f"?latitude={la}&longitude={lo}&start_date={d.isoformat()}&end_date={nd.isoformat()}"
+                               "&hourly=cloud_cover&models=metno_seamless&timezone=GMT")
+            cc = dict(zip(wx["hourly"]["time"], wx["hourly"]["cloud_cover"]))
+            for h in hs:
+                cloud[h] = cc.get(h.strftime("%Y-%m-%dT%H:00"))
+        hp = fetch_hp30(hours[0], hours[-1] + timedelta(hours=1))
+        rows = []
+        for h in hours:
+            p = pos[h]
+            sa = sun_alt(h, p["lat"], p["lon"])
+            if sa >= -3:
+                continue
+            hv = [v for t, v in hp if h <= t < h + timedelta(hours=1)]
+            rows.append([local_hm(h), round(sa, 1), None if cloud.get(h) is None else round(cloud[h]),
+                         max(hv) if hv else None, round(kp_required(mag_lat(p["lat"], p["lon"])), 1)])
+        if not rows or any(r[2] is None for r in rows):
+            continue  # analysis not complete yet, try again next run
+        dark = [r for r in rows if r[1] <= DARK_SUN]
+        hp_dark = [r[3] for r in dark if r[3] is not None]
+        rec["observed"] = {
+            "clear_dark": [r[0] for r in dark if r[2] <= CLEAR_MAX],
+            "hp30_max_dark": max(hp_dark) if hp_dark else None,
+            "kp_needed": min(r[4] for r in dark) if dark else None,
+            "hours": rows,
+        }
+    log["nights"] = {k: v for k, v in log["nights"].items() if len(v) > 1}
+    log["updated"] = iso(now)
+    save_json(DATA / "cruise_log.json", log, compact=True)
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -611,6 +669,7 @@ def main():
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
     met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
+    update_cruise_log(now, nights, route)
     # Measured Hp30 over the whole Kp chart (last week), drawn over NOAA's 3-hourly Kp; the last 24 h feed the live tile.
     hp30_week = fetch_hp30_since(parse_utc(kp3[0]["t"]) if kp3 else now - timedelta(days=7), now) or []
     hp30 = [p for p in hp30_week if parse_utc(p[0]) >= now - timedelta(hours=24)]
