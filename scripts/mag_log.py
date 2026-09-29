@@ -6,7 +6,7 @@ every 10 min and writes data/mag.json. Only in the dark at Tromsø: in daylight 
 
 Stations near the route: Kilpisjärvi (~100 km from Tromsø) and Masi (~70 km south of Alta).
 Swing = max − min of the horizontal field (nT); a substorm (active aurora overhead) shows as a sudden dip.
-Also a 24 h series for the dashboard chart: 2-minute means relative to the 24 h median ("quiet level").
+Also a 24 h series for the dashboard chart: 1-minute means relative to the 24 h median ("quiet level").
 Output: data/mag.json  {"updated": ..., "stations": {"KIL": {..., "series": {"t0", "step_min", "dev"}}, "MAS": {...}}}
 """
 import math
@@ -18,7 +18,7 @@ BASE = "https://space.fmi.fi/image/realtime/UT/{s}/{s}data_24.txt"
 STATIONS = {"KIL": ("Kilpisjärvi", 69.02, 20.79), "MAS": ("Masi", 69.46, 23.70)}
 TROMSO = (69.65, 18.96)
 DARK_SUN_ALT = -3  # degrees; a little before nautical twilight is enough to start logging
-STEP_MIN = 2
+STEP_MIN = 1
 
 
 def parse(text):
@@ -50,7 +50,7 @@ def summarize(rows):
 
 
 def series(rows):
-    """2-minute means of H minus the 24 h median; None where data is missing."""
+    """1-minute means of H minus the 24 h median; None where data is missing."""
     quiet = sorted(h for _, h in rows)[len(rows) // 2]
     t0 = rows[0][0].replace(minute=rows[0][0].minute - rows[0][0].minute % STEP_MIN, second=0)
     bins = {}
