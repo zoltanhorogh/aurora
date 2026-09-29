@@ -1,12 +1,12 @@
 {
  "baseline": {
   "2026-10-13": {
-   "score": 0.204,
+   "score": 0.221,
    "rating": "LOW"
   },
   "2026-10-14": {
-   "score": 0.259,
-   "rating": "FAIR"
+   "score": 0.242,
+   "rating": "LOW"
   },
   "2026-10-15": {
    "score": 0.155,
@@ -54,6 +54,6 @@
  "digest_date": "2026-09-29",
  "cmes_sent": [],
  "change_day": "2026-09-29",
- "changes_today": 1,
- "updated": "2026-09-29T09:34:54Z"
+ "changes_today": 2,
+ "updated": "2026-09-29T15:36:08Z"
 }
