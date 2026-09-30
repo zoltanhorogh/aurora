@@ -108,6 +108,7 @@ INJECT = r"""<script>
     }
     for (let i = 0; i < 2; i++) { const b = $$('#mag .daytabs button')[i]; if (b) { b.click(); await sleep(150); } }
     check('magnetometer chart rendered', !!document.querySelector('#mag-chart svg'));
+    check('satellite panel rendered', /Clouds from space/.test((document.querySelector('#sat') || {}).textContent || ''));
     $$('details').forEach((d) => { d.open = true; });
     await sleep(400);
     check('live tiles rendered', $$('#live-tiles .tile').length >= 7);

@@ -847,6 +847,7 @@
     OVATION = null;
     refreshOvation();
     loadBz();
+    loadSat();
     document.querySelectorAll('img[data-live]').forEach((img) => { img.src = `${img.dataset.live}?t=${Date.now()}`; });
     loadAiChips();
   }
@@ -904,6 +905,83 @@
       if (dl <= 10 && glat >= lat && glat <= lat + 8) north = Math.max(north, p);
     }
     return { local, north };
+  }
+
+  // ------------------------------------------------------------ clouds from space (Meteosat) + where they move
+  // MET Norway serves EUMETSAT's Meteosat infrared picture of Europe every 15 minutes (day and night).
+  // We show the Scandinavian corner of the last hour as a short loop, and the wind at ~3 km height
+  // (700 hPa, the level clouds drift with) at the ship, as an arrow: which way the clouds are moving.
+  const SAT = 'https://api.met.no/weatherapi/geosatellite/1.4/';
+  const SAT_CROP = { x: 600, y: 0, w: 480, h: 300, W: 1280, H: 720 }; // Scandinavia in the 1280x720 Europe picture
+  const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  let satTimer = null;
+
+  function renderSat() {
+    const el = $('#sat');
+    if (!el) return;
+    const c = SAT_CROP;
+    el.innerHTML = `<h3>Clouds from space <span class="why">· last hour</span></h3>
+      <p class="hint" style="margin-top:0">Satellite picture (Meteosat, infrared, works at night): <b>white = cloud</b> (the brighter, the higher and colder), <b>blue = clear sea</b>, <b>green = clear land</b>. The frames of the last hour play in a loop, so you can see which way the clouds drift and whether a clear gap is coming.</p>
+      <div class="satbox" style="padding-top:${(c.h / c.w) * 100}%"><img id="sat-img" alt="Meteosat infrared picture of Scandinavia" style="width:${(c.W / c.w) * 100}%;left:-${(c.x / c.w) * 100}%;top:-${(c.y / c.h) * 100}%"></div>
+      <div class="hint" id="sat-time"></div>
+      <div id="sat-wind" class="satwind"></div>
+      <p class="hint">Norway is squeezed at the top: the satellite sits above the equator and sees the north at a low angle. Thin low cloud or fog can look like clear ground. Sharper pictures when a polar satellite passes (not always over the ship): <a href="https://api.met.no/weatherapi/polarsatellite/1.1/?area=nr&channel=ch4&satellite=noaa&size=l" target="_blank" rel="noopener">northern Norway</a> · <a href="https://api.met.no/weatherapi/polarsatellite/1.1/?area=nm&channel=ch4&satellite=noaa&size=l" target="_blank" rel="noopener">mid Norway</a>. Source: EUMETSAT / MET Norway; wind: Open-Meteo.</p>`;
+    loadSat();
+  }
+
+  async function loadSat() {
+    const img = document.getElementById('sat-img');
+    if (!img) return;
+    try {
+      // plain fetch: MET's API rejects the cache-busting ?t= parameter that getJSON adds
+      const r = await fetch(`${SAT}available.json`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('satellite list ' + r.status);
+      const list = await r.json();
+      const frames = list.filter((x) => x.params.area === 'europe' && x.params.type === 'infrared' && x.params.size === 'normal')
+        .map((x) => x.params.time).sort().slice(-4);
+      if (!frames.length) throw new Error('no frames');
+      const urls = frames.map((t) => `${SAT}?area=europe&type=infrared&size=normal&time=${encodeURIComponent(t)}`);
+      urls.forEach((u) => { new Image().src = u; }); // preload the loop
+      let i = 0;
+      clearInterval(satTimer);
+      const show = () => {
+        img.src = urls[i];
+        $('#sat-time').textContent = `Frame ${i + 1}/${urls.length}: ${hm(frames[i])} ship time${i === urls.length - 1 ? ' (latest)' : ''}`;
+        i = (i + 1) % urls.length;
+      };
+      show();
+      satTimer = setInterval(show, 900);
+    } catch {
+      img.removeAttribute('src');
+      $('#sat-time').textContent = 'Satellite picture not available (offline?).';
+    }
+    loadCloudWind();
+  }
+
+  async function loadCloudWind() {
+    const box = document.getElementById('sat-wind');
+    if (!box) return;
+    const s = shipNow();
+    const [lat, lon, where] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'at Tromsø (not sailing yet)'];
+    try {
+      const js = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(2)}&longitude=${lon.toFixed(2)}&hourly=wind_speed_700hPa,wind_direction_700hPa&forecast_days=2&timezone=GMT`);
+      const t0 = Math.floor(Date.now() / 3600e3) * 3600e3;
+      const at = (dh) => {
+        const k = js.hourly.time.findIndex((x) => new Date(x + ':00Z').getTime() === t0 + dh * 3600e3);
+        return k < 0 ? null : { t: t0 + dh * 3600e3, dir: js.hourly.wind_direction_700hPa[k], v: js.hourly.wind_speed_700hPa[k] };
+      };
+      const toward = (d) => (d + 180) % 360; // wind direction is where it comes FROM; clouds move the other way
+      const word = (d) => COMPASS[Math.round(toward(d) / 45) % 8];
+      const arrow = (d, size) => `<svg viewBox="-12 -12 24 24" width="${size}" height="${size}" aria-hidden="true"><g transform="rotate(${toward(d)})"><line x1="0" y1="10" x2="0" y2="-3" stroke="#9fd3ff" stroke-width="3" stroke-linecap="round"/><path d="M0,-11 L6,-2 L-6,-2 Z" fill="#9fd3ff"/></g></svg>`;
+      const now = at(0);
+      if (!now) throw new Error('no data');
+      const later = [3, 6].map(at).filter(Boolean);
+      box.innerHTML = `<div class="satwind-now">${arrow(now.dir, 44)}<div><div class="v">Clouds moving toward the ${word(now.dir)}</div>
+          <div class="s">about ${Math.round(now.v)} km/h · wind at ~3 km height ${where} · north is up, like the picture</div></div></div>
+        <div class="satwind-later">${later.map((x) => `<span>${hm(x.t)} ${arrow(x.dir, 18)} ${word(x.dir)}, ${Math.round(x.v)} km/h</span>`).join('')}</div>`;
+    } catch {
+      box.innerHTML = '<div class="hint">Cloud drift not available (offline?).</div>';
+    }
   }
 
   // ------------------------------------------------------------ all-sky cameras (ground truth, live)
@@ -1522,7 +1600,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderSat, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     startLiveRefresh();
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
