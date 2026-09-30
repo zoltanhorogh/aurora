@@ -664,6 +664,11 @@ def update_cruise_log(now, nights, route):
 # The basic view's answer for tonight (cruise night on board, Tromsø before the cruise) at every run,
 # so the page can say "changed at 15:30: was GO 21-23, now NO" and why (the clouds).
 
+# Same time-of-night curve as the page (Kiruna all-sky camera statistics, % of clear nights with aurora, by UT hour).
+USE_TIME_CURVE = True
+AURORA_BY_UT = {15: 33, 16: 46, 17: 50, 18: 60, 19: 72, 20: 78, 21: 85, 22: 83, 23: 81, 0: 77, 1: 72, 2: 71, 3: 58, 4: 48, 5: 45}
+
+
 def tonight_answer(n):
     dark = [h for h in n["hourly"] if h["dark"] and h["cloud_met"] is not None]
     clouds = [round(h["cloud_met"]) for h in dark]
@@ -672,8 +677,14 @@ def tonight_answer(n):
     if not n["clear"]["source"].startswith("MET Norway"):
         return {**out, "verdict": "far", "window": None, "score": n["score"]}
     st = [hour_verdict(h) for h in n["hourly"]]
+
+    def worth(r):
+        if not USE_TIME_CURVE:
+            return r[1] - r[0]
+        return sum(AURORA_BY_UT.get(parse_utc(h["t"]).hour, 30) / 100 for h in n["hourly"][r[0]:r[1] + 1])
+
     for want in ("GO", "TRY"):
-        best, i = None, 0
+        runs, i = [], 0
         while i < len(st):
             if st[i] != want:
                 i += 1
@@ -681,9 +692,12 @@ def tonight_answer(n):
             j = i
             while j + 1 < len(st) and st[j + 1] == want:
                 j += 1
-            if not best or j - i > best[1] - best[0]:
-                best = (i, j)
+            runs.append((i, j))
             i = j + 1
+        best = None
+        for r in runs:
+            if best is None or worth(r) > worth(best) + 1e-9:
+                best = r
         if best:
             end = parse_utc(n["hourly"][best[1]]["t"]) + timedelta(hours=1)
             return {**out, "verdict": "GO" if want == "GO" else "MAYBE",

@@ -372,22 +372,32 @@
     return `<div class="sunstrip">${ev.map((e) => `<div>${evIcon(e.kind)}<b>${e.local}</b>${EVENT_SHORT[e.kind]}</div>`).join('')}</div>`;
   }
 
+  // How often aurora is seen at each hour of a clear night (Kiruna all-sky camera, 1985-1994, IRF), by UT hour.
+  // With USE_TIME_CURVE the best window is the clear stretch with the most aurora-hours, not simply the longest
+  // or the first one. false = the previous behaviour (longest stretch).
+  const USE_TIME_CURVE = true;
+  const AURORA_BY_UT = { 15: 33, 16: 46, 17: 50, 18: 60, 19: 72, 20: 78, 21: 85, 22: 83, 23: 81, 0: 77, 1: 72, 2: 71, 3: 58, 4: 48, 5: 45 };
+  const auroraShare = (h) => (AURORA_BY_UT[new Date(h.t).getUTCHours()] ?? 30) / 100;
+
   function bestWindow(n) {
     if (!metCovers(n)) return null;
     const st = n.hourly.map((h) => hourStatus(h)[0]);
     for (const want of ['GO', 'TRY']) {
-      let best = null, i = 0;
+      const runs = [];
+      let i = 0;
       while (i < st.length) {
         if (st[i] !== want) { i++; continue; }
         let j = i;
         while (j + 1 < st.length && st[j + 1] === want) j++;
-        if (!best || j - i > best[1] - best[0]) best = [i, j];
+        runs.push([i, j]);
         i = j + 1;
       }
-      if (best) {
-        const end = new Date(new Date(n.hourly[best[1]].t).getTime() + 3600e3);
-        return { label: want, text: `${n.hourly[best[0]].local}–${hm(end)}` };
-      }
+      if (!runs.length) continue;
+      const worth = (r) => (USE_TIME_CURVE ? n.hourly.slice(r[0], r[1] + 1).reduce((s, h) => s + auroraShare(h), 0) : r[1] - r[0]);
+      const best = runs.reduce((b, r) => (worth(r) > worth(b) + 1e-9 ? r : b), runs[0]);
+      const text = (r) => `${n.hourly[r[0]].local}–${hm(new Date(new Date(n.hourly[r[1]].t).getTime() + 3600e3))}`;
+      const peak = n.hourly.slice(best[0], best[1] + 1).reduce((b, h) => (auroraShare(h) > auroraShare(b) ? h : b));
+      return { label: want, text: text(best), peak: peak.local, others: runs.filter((r) => r !== best).map(text) };
     }
     return null;
   }
@@ -1689,7 +1699,8 @@
       : sky.cls === 'mid' ? 'Gaps in the clouds are possible: worth a look outside.'
       : aur.cls === 'mid' ? 'Activity is borderline: maybe a faint glow low in the north.'
       : 'Aurora and a clear sky line up.';
-    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, aur, sky, line };
+    const extra = win && USE_TIME_CURVE ? ` Best around ${win.peak}${win.others.length ? ` · also ${win.label === 'GO' ? 'clear' : 'partly clear'} ${win.others.join(', ')}` : ''}.` : '';
+    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, aur, sky, line: line + extra };
     return { cls: 'n', big: 'NO', small: aur.cls === 'bad' ? 'too quiet here' : 'cloudy', aur, sky, line };
   }
 
@@ -1723,6 +1734,8 @@
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
       <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
         hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
+      ${USE_TIME_CURVE ? `<div class="bcurve" style="grid-template-columns:repeat(${hrs.length},1fr)">${hrs.map((h) => `<b style="height:${Math.round(auroraShare(h) * 30)}px"></b>`).join('')}</div>
+      <div class="blegend"><span><b class="cv"></b>how often aurora is seen at that hour on clear nights (Kiruna, 10 years)</span></div>` : ''}
       <div class="blegend bsky"><span>Icons = clouds only:</span>${[[20, 'clear ≤40%'], [55, 'broken ≤70%'], [90, 'overcast']].map(([c, t]) =>
         `<span><svg viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(c)}</svg>${t}</span>`).join('')}</div>
       <div class="bwhy" id="b-why"><span class="btap">👆 Tap an hour to see why</span></div>`;
@@ -1877,7 +1890,7 @@
           <span class="k t">twilight</span> sun 3–12° below the horizon, too bright for faint aurora.
           The two tiles under the answer split it in two: <b>Aurora</b> (is the activity strong enough here: active, borderline, too weak) and <b>Sky</b> (clear gap, partly cloudy, cloudy).
           The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
-          Tap an hour in the strip to see its numbers. The big answer is the longest green stretch (yellow if there is none). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
+          Tap an hour in the strip to see its numbers. The big answer is the green stretch (yellow if there is none) with the best aurora hours: on clear nights aurora is seen most often around midnight (about 85% of clear nights at 23–00 h, 60% at 20 h; Kiruna all-sky camera statistics, the small green bars under the strip). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
         <p><b>Aurora now</b> comes from the nearest magnetometer when there is one (Tromsø and Alta area):
           <b>Quiet</b> = calm field ·
