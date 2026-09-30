@@ -113,6 +113,24 @@ INJECT = r"""<script>
     $$('details').forEach((d) => { d.open = true; });
     await sleep(400);
     check('live tiles rendered', $$('#live-tiles .tile').length >= 7);
+    // Scrolling: every tab must land its section just under the header, the title must go to the very top
+    const hdr = () => document.querySelector('.topbar').offsetHeight;
+    const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+    for (const a of $$('#tabs a')) {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      await sleep(100);
+      a.click();
+      await sleep(1800);
+      const el = document.querySelector(a.getAttribute('href'));
+      const top = el ? el.getBoundingClientRect().top : -999;
+      check(`tab "${a.textContent}" lands under the header`, el && (Math.abs(top - (hdr() + 8)) <= 6 || (atBottom() && top >= hdr())),
+        `section top ${Math.round(top)} px, header ${hdr()} px`);
+    }
+    window.scrollTo({ top: 2500, behavior: 'instant' });
+    await sleep(100);
+    document.querySelector('#home').click();
+    await sleep(1800);
+    check('title scrolls to the very top', window.scrollY <= 1, `scrollY ${window.scrollY}`);
     // Basic view: switch, check the one-screen summary, then a night card must open the advanced detail
     const bb = document.querySelector('#mode button[data-mode="basic"]');
     if (bb) {
@@ -215,7 +233,12 @@ def main():
     args = ap.parse_args()
     problems = []
 
-    print("1) compile")
+    print("1) compile and versions")
+    sw_ver = re.search(r"aurora-v(\d+)", (ROOT / "sw.js").read_text(encoding="utf-8")).group(1)
+    html = (ROOT / "index.html").read_text(encoding="utf-8")
+    for asset in ("assets/app.js", "assets/style.css"):
+        if f"{asset}?v={sw_ver}" not in html:
+            problems.append(f"index.html must load {asset}?v={sw_ver} (same number as the cache in sw.js)")
     for f in sorted((ROOT / "scripts").glob("*.py")) + [Path(__file__)]:
         try:
             py_compile.compile(str(f), doraise=True)

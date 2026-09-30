@@ -268,7 +268,7 @@
       selected = b.dataset.date;
       renderCards();
       renderDetail();
-      window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'smooth' });
+      scrollToY(yOf($('#night-detail')));
     }));
   }
 
@@ -1575,12 +1575,37 @@
     window.addEventListener('resize', set);
   }
 
+  // Smooth scroll, then check twice and snap to the exact spot: pictures and charts above the target can
+  // finish loading while the page moves, and iOS resizes the screen when its address bar appears.
+  // A touch or the wheel in between means the user took over: no correction then.
+  function scrollToY(getY) {
+    let userMoved = false;
+    const stop = () => { userMoved = true; };
+    window.addEventListener('touchstart', stop, { once: true, passive: true });
+    window.addEventListener('wheel', stop, { once: true, passive: true });
+    window.scrollTo({ top: getY(), behavior: 'smooth' });
+    for (const ms of [700, 1500]) {
+      setTimeout(() => {
+        const y = getY();
+        if (!userMoved && Math.abs(window.scrollY - y) > 3) window.scrollTo({ top: y, behavior: 'instant' });
+      }, ms);
+    }
+  }
+  const yOf = (el) => () => Math.max(0, el.getBoundingClientRect().top + window.scrollY - headerOffset()); // 8 px below the header
+
   function navSpy() {
-    $('#tabs a[href="#check"]').addEventListener('click', () => { const p = $('#check-panel'); if (!p.open) p.open = true; });
     trackHeader();
+    document.querySelectorAll('#tabs a').forEach((a) => a.addEventListener('click', (ev) => {
+      const el = document.querySelector(a.getAttribute('href'));
+      if (!el) return;
+      ev.preventDefault();
+      if (a.getAttribute('href') === '#check') { const p = $('#check-panel'); if (!p.open) p.open = true; }
+      scrollToY(yOf(el));
+      history.replaceState(null, '', location.pathname + location.search + a.getAttribute('href'));
+    }));
     $('#home').addEventListener('click', (ev) => {
       ev.preventDefault();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollToY(() => 0);
       history.replaceState(null, '', location.pathname + location.search);
     });
     const links = [...document.querySelectorAll('#tabs a')];
@@ -1650,7 +1675,7 @@
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
       <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
         hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
-      <div class="bwhy" id="b-why">Tap an hour to see why.</div>`;
+      <div class="bwhy" id="b-why"><span class="btap">👆 Tap an hour to see why</span></div>`;
   }
 
   // Why an hour of the strip has its colour, in one line.
@@ -1769,7 +1794,7 @@
     el.innerHTML = `${tonight}
       <div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>
-      <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'}</div>
+      <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
           <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div>
           <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>
@@ -1806,7 +1831,7 @@
       selected = b.dataset.date;
       renderCards();
       renderDetail();
-      window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'instant' });
+      scrollToY(yOf($('#night-detail')));
     })));
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
   }
