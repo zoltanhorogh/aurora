@@ -142,6 +142,7 @@ INJECT = r"""<script>
       if (wx && wx.here && (wx.here.series || []).some((e) => new Date(e.t).getTime() >= Date.now() - 3600e3)) check('basic weather card rendered', /Weather here/.test(b.textContent));
       check('basic view has tonight and right now', /Tonight/.test(b.textContent) && /Right now/.test(b.textContent)
         && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
+      if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('.bfx .bf').length === 2);
       const cell = b.querySelector('.bstrip > div');
       if (cell) {
         cell.click();

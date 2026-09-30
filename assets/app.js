@@ -1656,35 +1656,41 @@
     return mc ? { n: mc, practice: true } : null;
   }
 
+  // Tonight's answer plus its two parts: is there aurora (activity) and can we see it (clouds).
   function basicVerdict(n) {
     const act = n.factors.activity;
-    const aurora = act >= 0.6 ? 'likely' : act >= 0.3 ? 'possible' : 'unlikely';
+    const kp = n.activity.kp != null ? n.activity.kp.toFixed(1) : '?';
+    const aur = act >= 0.5 ? { cls: 'ok', word: '✓ Active' } : act >= 0.25 ? { cls: 'mid', word: 'Borderline' } : { cls: 'bad', word: '✕ Too weak' };
+    aur.sub = `Kp ${kp} · ${n.kp_req <= 1 ? `${n.kp_req.toFixed(1)} is enough here` : `about ${n.kp_req.toFixed(0)} needed here`}`;
     if (!metCovers(n)) {
-      return { cls: ratingCls(n.rating), big: pct(n.score), small: 'chance',
-        sub: `Aurora: ${aurora} · hour by hour ${metFromText(n) ? `from ${metFromText(n)}` : 'later'}` };
+      const p = n.clear.p;
+      const sky = { cls: p >= 0.5 ? 'ok' : p >= 0.25 ? 'mid' : 'bad', word: `${pct(p)} clear chance`,
+        sub: `hour by hour ${metFromText(n) ? `from ${metFromText(n)}` : 'later'}` };
+      return { cls: ratingCls(n.rating), big: pct(n.score), small: 'chance', aur, sky, line: 'Too far ahead for hour-by-hour clouds yet.' };
     }
     const hrs = n.hourly.filter((h) => h.dark && h.cloud_met != null);
     const clearH = hrs.filter((h) => h.cloud_met <= CLEAR_LINE).length;
-    const sky = !hrs.length ? '–' : clearH >= hrs.length * 0.7 ? 'clear' : clearH ? `clear ${clearH} of ${hrs.length} dark hours` : 'cloudy';
-    const win = bestWindow(n);
-    const kpTxt = `Kp ${n.activity.kp != null ? n.activity.kp.toFixed(1) : '?'}, ${n.kp_req <= 1 ? `${n.kp_req.toFixed(1)} is enough here` : `about ${n.kp_req.toFixed(0)} needed here`}`;
     const range = (hh) => { const c = hh.map((h) => Math.round(h.cloud_met)); return `${Math.min(...c)}–${Math.max(...c)}% cloud`; };
-    const actOk = act >= 0.5;
-    let reason;
+    const win = bestWindow(n);
+    let sky;
     if (win) {
       const inWin = hrs.filter((h) => hourStatus(h)[0] === win.label);
-      reason = win.label === 'GO'
-        ? `Clear gap ${win.text} (${range(inWin)}) and the activity is enough here (${kpTxt}).`
-        : inWin.every((h) => h.cloud_met <= CLEAR_LINE)
-          ? `Clear ${win.text} (${range(inWin)}), but the activity is borderline here (${kpTxt}).`
-          : `Partly cloudy ${win.text} (${range(inWin)}): gaps are possible. ${actOk ? `The activity is enough here (${kpTxt}).` : `Activity: ${kpTxt}.`}`;
-    } else if (act < 0.25) {
-      reason = `${clearH ? 'Clear gaps are likely' : 'It is cloudy too'}, but the activity is too low here (${kpTxt}).`;
+      sky = inWin.every((h) => h.cloud_met <= CLEAR_LINE)
+        ? { cls: 'ok', word: '✓ Clear gap', sub: `${range(inWin)} ${win.text}` }
+        : { cls: 'mid', word: 'Partly cloudy', sub: `${range(inWin)} ${win.text}` };
+    } else if (clearH) {
+      sky = { cls: 'ok', word: '✓ Clear', sub: `${clearH} of ${hrs.length} dark hours ≤40% cloud` };
     } else {
-      reason = `${actOk ? 'The aurora should be active tonight' : 'Some aurora activity is possible'} (${kpTxt}), but MET forecasts ${hrs.length ? range(hrs) : 'cloud'} in the dark hours.`;
+      sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} all night` : 'no clear hour' };
     }
-    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, sub: `Aurora: ${aurora} · Sky: ${sky}`, reason };
-    return { cls: 'n', big: 'NO', small: act < 0.25 ? 'aurora too weak here' : 'cloudy', sub: `Aurora: ${aurora} · Sky: ${sky}`, reason };
+    const line = aur.cls === 'ok' && sky.cls === 'bad' ? 'The aurora is there, the clouds hide it.'
+      : aur.cls === 'bad' && sky.cls === 'ok' ? 'Clear sky, but the aurora is too weak here.'
+      : aur.cls === 'bad' && sky.cls === 'bad' ? 'Weak activity and cloudy.'
+      : sky.cls === 'mid' ? 'Gaps in the clouds are possible: worth a look outside.'
+      : aur.cls === 'mid' ? 'Activity is borderline: maybe a faint glow low in the north.'
+      : 'Aurora and a clear sky line up.';
+    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, aur, sky, line };
+    return { cls: 'n', big: 'NO', small: aur.cls === 'bad' ? 'too quiet here' : 'cloudy', aur, sky, line };
   }
 
   // "Changed at 15:30: was GO 21:00–23:00 (5–31% cloud), now NO (85–100% cloud)" from the forecast runs of today.
@@ -1839,9 +1845,11 @@
         <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
         <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
-        ${v.reason ? `<div class="breason">${esc(v.reason)}</div>` : ''}
+        <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
+          `<div class="bf ${f.cls}"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
+        <div class="bline">${esc(v.line)}</div>
         ${basicChange(t.n.date) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date))}</div>` : ''}
-        <div class="b-sub">${esc(v.sub)} · ${esc(darkText(t.n))}</div>
+        <div class="b-sub">${esc(darkText(t.n))}</div>
         ${basicStrip(t.n)}</div>`;
     }
     const [acls, aword, atxt] = basicAuroraNow();
@@ -1867,6 +1875,7 @@
           <span class="k y">maybe</span> cloud ≤70% and aurora chance ≥25% ·
           <span class="k n">no</span> otherwise ·
           <span class="k t">twilight</span> sun 3–12° below the horizon, too bright for faint aurora.
+          The two tiles under the answer split it in two: <b>Aurora</b> (is the activity strong enough here: active, borderline, too weak) and <b>Sky</b> (clear gap, partly cloudy, cloudy).
           The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
           Tap an hour in the strip to see its numbers. The big answer is the longest green stretch (yellow if there is none). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
