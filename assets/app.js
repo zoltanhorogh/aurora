@@ -808,6 +808,8 @@
     getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
       const k = a[a.length - 1].estimated_kp;
       setTile('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(0)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
+      LIVE.kp = k;
+      basicRefresh();
     }).catch(() => setTile('lt-kp', '–', 'offline'));
     getJSON(`${SWPC}/products/summary/solar-wind-mag-field.json`).then((a) => {
       const bz = a[0].bz_gsm;
@@ -829,6 +831,7 @@
     updateHp30Tile();
     updateMagTile();
     safe(drawMagChart);
+    basicRefresh();
   }
 
   function refreshOvation() {
@@ -837,6 +840,8 @@
       const [lat, lon, label] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'Tromsø (not sailing yet)'];
       const { local, north } = ovationAt(o, lat, lon);
       setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+      LIVE.ov = local;
+      basicRefresh();
     }).catch(() => setTile('lt-ov', '–', 'offline'));
     drawOvationMap();
     renderRouteOvation();
@@ -975,6 +980,8 @@
       const arrow = (d, size) => `<svg viewBox="-12 -12 24 24" width="${size}" height="${size}" aria-hidden="true"><g transform="rotate(${toward(d)})"><line x1="0" y1="10" x2="0" y2="-3" stroke="#9fd3ff" stroke-width="3" stroke-linecap="round"/><path d="M0,-11 L6,-2 L-6,-2 Z" fill="#9fd3ff"/></g></svg>`;
       const now = at(0);
       if (!now) throw new Error('no data');
+      LIVE.drift = `toward the ${word(now.dir)}`;
+      basicRefresh();
       const later = [3, 6].map(at).filter(Boolean);
       box.innerHTML = `<div class="satwind-now">${arrow(now.dir, 44)}<div><div class="v">Clouds moving toward the ${word(now.dir)}</div>
           <div class="s">about ${Math.round(now.v)} km/h · wind at ~3 km height ${where} · north is up, like the picture</div></div></div>
@@ -1580,6 +1587,172 @@
     document.querySelectorAll('main section').forEach((s) => obs.observe(s));
   }
 
+  // ------------------------------------------------------------ basic view
+  // One screen, no explanations: tonight's answer with an hour strip, "right now", the next nights and
+  // last night. Advanced = the full page. The choice is remembered on this device; Basic is the default.
+  let MODE = 'basic';
+  try { MODE = localStorage.getItem('aurora-mode') || 'basic'; } catch { /* private mode: stay basic */ }
+  const LIVE = {}; // live values the basic view reuses: Kp now, OVATION overhead, cloud drift
+
+  function applyMode() {
+    document.body.classList.toggle('basic-mode', MODE === 'basic');
+    document.querySelectorAll('#mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === MODE));
+    if (MODE === 'basic') safe(renderBasic);
+  }
+  function setMode(m, then) {
+    MODE = m;
+    try { localStorage.setItem('aurora-mode', m); } catch { /* ignore */ }
+    applyMode();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (then) setTimeout(then, 50);
+  }
+  const basicRefresh = () => { if (MODE === 'basic') safe(renderBasic); };
+
+  // From 06:00 ship time "tonight" is the coming night: the cruise night on board, before the cruise Tromsø (practice).
+  function basicTonight() {
+    const s = shipDate(Date.now());
+    if (s.getUTCHours() < 6) s.setUTCDate(s.getUTCDate() - 1);
+    const date = s.toISOString().slice(0, 10);
+    const cruise = D.nights.find((n) => n.date === date);
+    if (cruise) return { n: cruise, practice: false };
+    const mc = D.model_check && D.model_check.nights.find((n) => n.date === date && n.spot === 'Tromsø');
+    return mc ? { n: mc, practice: true } : null;
+  }
+
+  function basicVerdict(n) {
+    const act = n.factors.activity;
+    const aurora = act >= 0.6 ? 'likely' : act >= 0.3 ? 'possible' : 'unlikely';
+    if (!metCovers(n)) {
+      return { cls: ratingCls(n.rating), big: pct(n.score), small: 'chance',
+        sub: `Aurora: ${aurora} · hour by hour ${metFromText(n) ? `from ${metFromText(n)}` : 'later'}` };
+    }
+    const hrs = n.hourly.filter((h) => h.dark && h.cloud_met != null);
+    const clearH = hrs.filter((h) => h.cloud_met <= CLEAR_LINE).length;
+    const sky = !hrs.length ? '–' : clearH >= hrs.length * 0.7 ? 'clear' : clearH ? `clear ${clearH} of ${hrs.length} dark hours` : 'cloudy';
+    const win = bestWindow(n);
+    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, sub: `Aurora: ${aurora} · Sky: ${sky}` };
+    return { cls: 'n', big: 'NO', small: act < 0.25 ? 'aurora too weak here' : 'cloudy', sub: `Aurora: ${aurora} · Sky: ${sky}` };
+  }
+  const ratingCls = (r) => ({ GOOD: 'g', FAIR: 'y' }[r] || 'n');
+
+  function basicStrip(n) {
+    const now = Date.now();
+    const hrs = n.hourly.filter((h) => h.sun < -3);
+    const cells = hrs.map((h) => {
+      const st = !h.dark ? 't' : h.cloud_met == null ? 'u' : ({ GO: 'g', TRY: 'y' }[hourStatus(h)[0]] || 'n');
+      return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}"><i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
+    }).join('');
+    return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
+      <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight</span>${
+        hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>`;
+  }
+
+  // Aurora now: the nearest fresh FMI magnetometer when there is one (up north), else Kp / Hp30 / OVATION.
+  function basicAuroraNow() {
+    const s = shipNow();
+    const [lat, lon] = s.sailing ? [s.lat, s.lon] : [69.65, 18.96];
+    const need = kpNeedAt(lat, lon);
+    if (sunAltAt(new Date(), lat, lon) > -6) return ['day', 'Daylight', 'too bright to see aurora now; check again after dark'];
+    const R = Math.PI / 180;
+    const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
+    const st = Object.values((MAG && MAG.stations) || {})
+      .filter((x) => km(x) <= 300 && Date.now() - new Date(x.t) < 40 * 60e3).sort((a, b) => km(a) - km(b))[0];
+    if (st) {
+      const dev = st.series ? st.series.dev.filter((v) => v != null) : [];
+      const last = dev.length ? dev[dev.length - 1] : 0;
+      const low = dev.length ? Math.min(...dev.slice(-30)) : 0;
+      if (low <= -200 || st.swing_60 >= 200) return ['strong', 'Strong', `magnetometer ${esc(st.name)} ${low} nT: big display overhead`];
+      if (low <= -50 || st.change_10 <= -50) return ['active', 'Active', `magnetometer ${esc(st.name)} ${low} nT: aurora moving now`];
+      if (last >= 40 && shipDate(Date.now()).getUTCHours() >= 16) return ['charging', 'Charging ↑', `magnetometer rising (+${last} nT): a substorm is likely later tonight`];
+      return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm`];
+    }
+    const hp = HP30 && HP30.length ? HP30[HP30.length - 1][1] : null;
+    const lvl = Math.max(hp ?? -9, LIVE.kp ?? -9);
+    const txt = lvl > -9 ? `Kp/Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}` : 'live data loading…';
+    if (lvl >= need + 1.5 || (LIVE.ov || 0) >= 20) return ['active', 'Active', txt];
+    if (lvl >= need) return ['possible', 'Possible', txt];
+    return ['quiet', 'Quiet', txt];
+  }
+
+  function basicSky(n) {
+    const now = Date.now();
+    const drift = LIVE.drift ? ` · clouds drifting ${LIVE.drift}` : '';
+    const h0 = n && n.hourly.find((h) => Math.abs(new Date(h.t) - now) <= 1800e3 && h.cloud_met != null);
+    if (!h0) return ['', 'Daytime', `tonight's sky is in the strip above${drift}`];
+    const c = Math.round(h0.cloud_met);
+    const next = n.hourly.filter((h) => new Date(h.t) > now && new Date(h.t) - now <= 4 * 3600e3 && h.cloud_met != null);
+    const clearing = c > CLEAR_LINE && next.find((h) => h.cloud_met <= CLEAR_LINE);
+    const closing = c <= CLEAR_LINE && next.find((h) => h.cloud_met > 70);
+    const big = (c <= CLEAR_LINE ? 'Clear' : c <= 70 ? 'Partly cloudy' : 'Cloudy')
+      + (clearing ? ` → clearing ~${clearing.local}` : closing ? ` → clouding over ~${closing.local}` : '');
+    return [c <= CLEAR_LINE ? 'ok2' : '', big, `forecast cloud ${c}% (MET)${drift}`];
+  }
+
+  function basicShip() {
+    const s = shipNow();
+    if (!s.sailing) {
+      const days = Math.ceil((new Date(D.trip.start) - Date.now()) / 864e5);
+      return [days > 0 ? `${days} days to go` : 'Not sailing', 'until then "tonight" is Tromsø, for practice'];
+    }
+    const now = Date.now();
+    const port = D.trip.stops.find((st) => st.arrive && st.depart && new Date(st.arrive) <= now && now <= new Date(st.depart));
+    if (port) return [esc(port.name), `in port until ${hm(port.depart)}`];
+    const next = D.trip.stops.find((st) => st.arrive && new Date(st.arrive) > now);
+    return ['At sea', next ? `next: ${esc(next.name)}, ${dayLabel(next.arrive.slice(0, 10))} ${hm(next.arrive)}` : ''];
+  }
+
+  function basicLastNight() {
+    const past = D.nights.filter(isPast);
+    if (past.length) {
+      const n = past[past.length - 1];
+      const s = pastSummary(n);
+      return [`${dayLabel(n.date)}, ${esc(shortPlace(n.place))}`, `<span class="${s.cls === 'ok' ? 'ok2' : ''}">${esc(s.head)}</span>`];
+    }
+    if (!LAST || !LAST.date) return null;
+    const tr = (LAST.clouds || []).find((c) => c.spot === 'Tromsø');
+    const cl = tr && tr.clear_dark != null ? (tr.clear_dark.length ? ` · Tromsø clear ${tr.clear_dark[0]}–${tr.clear_dark[tr.clear_dark.length - 1]}` : ' · Tromsø cloudy') : '';
+    return [`${dayLabel(LAST.date)}, up north`, `<span class="${/^Aurora on|^Possible/.test(LAST.headline) ? 'ok2' : ''}">${esc(LAST.headline)}</span>${cl}`];
+  }
+
+  function renderBasic() {
+    const el = $('#basic');
+    if (!el || !D) return;
+    const t = basicTonight();
+    const s = shipNow();
+    let tonight = `<div class="b-card"><div class="b-k">Tonight</div><div class="b-sub" style="margin-top:6px">${
+      Date.now() > new Date(D.trip.end) ? 'The cruise is over. The last nights are under Advanced.' : 'No forecast for tonight yet.'}</div></div>`;
+    if (t) {
+      const v = basicVerdict(t.n);
+      tonight = `<div class="b-card">
+        <div class="b-k">Tonight · ${dayLabel(t.n.date)} · ${esc(t.practice ? 'Tromsø (practice before the cruise)' : shortPlace(t.n.place))}</div>
+        <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
+        <div class="b-sub">${esc(v.sub)} · ${esc(darkText(t.n))}</div>
+        ${basicStrip(t.n)}</div>`;
+    }
+    const [acls, aword, atxt] = basicAuroraNow();
+    const [scls, sword, stxt] = basicSky(t && t.n);
+    const [shipword, shiptxt] = basicShip();
+    const tile = (k, v, cls, txt) => `<div class="nt"><div class="b-k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${txt}</div></div>`;
+    const upcoming = D.nights.filter((n) => !isPast(n) && !(t && !t.practice && n.date === t.n.date));
+    const ln = basicLastNight();
+    el.innerHTML = `${tonight}
+      <div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
+        <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>
+      <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'}</div>
+        <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
+          <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div><div class="bar ${ratingCls(n.rating)}"></div></button>`).join('')}</div></div>
+      ${ln ? `<div class="b-card"><div class="b-k">Last night · ${ln[0]}</div><div class="blast">${ln[1]}</div></div>` : ''}
+      <div class="balerts">🔔 ${s.sailing ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the cruise starts.'}</div>
+      <a href="#" class="badv" id="b-adv">Advanced view: all numbers, charts and explanations →</a>`;
+    el.querySelectorAll('.bnc').forEach((b) => b.addEventListener('click', () => setMode('advanced', () => {
+      selected = b.dataset.date;
+      renderCards();
+      renderDetail();
+      window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'instant' });
+    })));
+    $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
+  }
+
   // ------------------------------------------------------------ boot
   const safe = (fn) => { try { fn(); } catch (e) { console.error(e); } };
 
@@ -1602,6 +1775,8 @@
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
     [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderSat, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     startLiveRefresh();
+    document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+    applyMode();
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
     if (linked) {

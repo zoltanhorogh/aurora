@@ -37,6 +37,7 @@ SITE_FILES = ["index.html", "sw.js", "manifest.webmanifest"]
 INJECT = r"""<script>
 (() => {
   const P = new URLSearchParams(location.search);
+  try { localStorage.setItem('aurora-mode', 'advanced'); } catch (e) { /* ignore */ } // the click-through checks the full page first
   const OFF = +(P.get('clock') || 0) * 1000;
   if (OFF) {
     const R = Date;
@@ -112,6 +113,22 @@ INJECT = r"""<script>
     $$('details').forEach((d) => { d.open = true; });
     await sleep(400);
     check('live tiles rendered', $$('#live-tiles .tile').length >= 7);
+    // Basic view: switch, check the one-screen summary, then a night card must open the advanced detail
+    const bb = document.querySelector('#mode button[data-mode="basic"]');
+    if (bb) {
+      bb.click();
+      await sleep(300);
+      const b = document.querySelector('#basic');
+      check('basic view shown', document.body.classList.contains('basic-mode') && b && b.offsetHeight > 100);
+      check('basic view has tonight and right now', /Tonight/.test(b.textContent) && /Right now/.test(b.textContent)
+        && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
+      const card = b.querySelector('.bnc');
+      if (card) {
+        card.click();
+        await sleep(400);
+        check('basic night card opens the advanced detail', !document.body.classList.contains('basic-mode') && /Hour by hour|PAST/.test(document.querySelector('#night-detail').textContent));
+      }
+    }
     const ln = document.querySelector('#last-night');
     check('last night panel rendered (or hidden without data)', ln && (ln.style.display === 'none' || /Last night up north/.test(ln.textContent)));
     const out = document.createElement('script');
