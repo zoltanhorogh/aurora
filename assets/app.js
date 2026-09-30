@@ -91,15 +91,17 @@
     const now = Date.now();
     const start = new Date(D.trip.start).getTime();
     const end = new Date(D.trip.end).getTime();
-    const toArctic = (new Date('2026-10-13T18:00:00Z') - now) / 864e5;
+    // Fixed phase starts (UTC), each tied to when a forecast reaches the nights that matter
     const steps = [
-      ['Trend', '27-day outlook + climate'],
-      ['Early weather', 'ensemble clouds gain weight'],
-      ['Sharpening', 'cloud forecasts become useful'],
-      ['Final days', 'NOAA 3-day Kp, CME models'],
-      ['On board', 'live nowcast + alerts'],
+      ['Trend', '27-day outlook + climate', null],
+      ['Early weather', 'ensemble clouds gain weight', '2026-09-27T16:00:00Z'], // global models reach the first Arctic night (16 days)
+      ['Sharpening', 'cloud forecasts become useful', '2026-10-04T16:00:00Z'], // MET's 9-day forecast reaches Tromsø and Alta
+      ['Final days', 'NOAA 3-day Kp, CME models', '2026-10-07T15:00:00Z'], // the 3 days before departure
+      ['On board', 'live nowcast + alerts', D.trip.start],
     ];
-    const idx = now > end ? 5 : now >= start ? 4 : toArctic > 16 ? 0 : toArctic > 7 ? 1 : toArctic > 3 ? 2 : 3;
+    const idx = now > end ? 5 : steps.reduce((k, s, i) => (s[2] && now >= new Date(s[2]).getTime() ? i : k), 0);
+    const when = (i) => (i === 0 ? `until ${shortDay(shipDate(steps[1][2]).toISOString().slice(0, 10))}`
+      : `from ${shortDay(shipDate(steps[i][2]).toISOString().slice(0, 10))}${i === 4 ? ` ${hm(steps[i][2])}` : ''}`);
     const meaning = [
       'Right now only the <b>general trend</b> is known: the Sun\'s 27-day rhythm and how cloudy October usually is. Treat the percentages as typical odds, not a forecast.',
       'Weather models start to reach the cruise, but at this range they are only a little better than climate. Watch the <b>trend chart</b>: consistent moves matter more than single values.',
@@ -117,7 +119,7 @@
     } else big = 'Welcome home';
     $('#phase').innerHTML = `
       <div class="phase-head"><div class="countdown">${big}</div></div>
-      <div class="steps">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s[0]}</b><span>${s[1]}</span></div>`).join('')}</div>
+      <div class="steps">${steps.map((s, i) => `<div class="step ${i < idx ? 'done' : i === idx ? 'now' : ''}"><b>${s[0]}</b><span>${s[1]}</span><small>${when(i)}</small></div>`).join('')}</div>
       <div class="hint" style="color:var(--text-2)">${meaning}</div>`;
   }
 
