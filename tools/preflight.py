@@ -138,6 +138,8 @@ INJECT = r"""<script>
       await sleep(300);
       const b = document.querySelector('#basic');
       check('basic view shown', document.body.classList.contains('basic-mode') && b && b.offsetHeight > 100);
+      const wx = await fetch('data/weather.json').then((r) => r.json()).catch(() => null);
+      if (wx && wx.here && (wx.here.series || []).some((e) => new Date(e.t).getTime() >= Date.now() - 3600e3)) check('basic weather card rendered', /Weather here/.test(b.textContent));
       check('basic view has tonight and right now', /Tonight/.test(b.textContent) && /Right now/.test(b.textContent)
         && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
       const cell = b.querySelector('.bstrip > div');
@@ -280,6 +282,9 @@ def main():
                 run_script(name, a, env, problems, label)
             tonight = (now + timedelta(hours=2)).replace(hour=19, minute=0, second=0, microsecond=0)
             run_script("alert.py", ["--dry-run", "--now", tonight.strftime("%Y-%m-%dT%H:%M:%SZ")], env, problems, label + ", 21:00")
+            here = (json.loads((data_ship / "weather.json").read_text(encoding="utf-8")) or {}).get("here")
+            if not here or not here.get("series"):
+                problems.append(f"{label}: weather.json has no 'here' forecast (Basic weather card would be empty)")
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [

@@ -262,6 +262,32 @@ def alerts(points):
 
 # ---------------------------------------------------------------- main
 
+def here_forecast(route, now, hours=24):
+    """Hourly weather where you are: before the cruise Tromsø (practice), on board the ship's planned position
+    hour by hour (the port while docked, the route at sea). MET Norway, one request per distinct position."""
+    if now > route.end:
+        return None
+    sailing = route.start <= now
+    cache, series = {}, []
+    t = now.replace(minute=0, second=0, microsecond=0)
+    for k in range(hours + 1):
+        h = t + timedelta(hours=k)
+        if sailing and h <= route.end:
+            pos = route.at(h)
+            lat, lon, place = pos["lat"], pos["lon"], ("at sea" if pos["state"] == "sea" else pos["place"])
+        else:
+            lat, lon, place = 69.65, 18.96, "Tromsø"
+        key = (round(lat * 4) / 4, round(lon * 4) / 4)
+        if key not in cache:
+            cache[key] = {e["t"]: e for e in met_complete(*key) if e["step"] == 1}
+        e = cache[key].get(iso(h))
+        if e:
+            series.append({**e, "place": place})
+    summ = summarize(series)
+    return {"label": "Tromsø (practice before the cruise)" if not sailing else "along the ship's route",
+            "sailing": sailing, "series": series, "summary": summ, "advice": advice(summ, "port")}
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -348,7 +374,8 @@ def main():
     warn = safe("met_alerts", alerts, points, default=[])
 
     sea = safe("open_meteo_marine", sea_legs_forecast, it, route, shift, default=[])
-    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sea_legs": sea, "sources": status,
+    here = safe("met_here", here_forecast, route, now, default=None)
+    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sea_legs": sea, "here": here, "sources": status,
                                       "test_shift_days": args.shift_days or None}, compact=True)
     print("weather done", iso(now), status)
     for p in ports_out:

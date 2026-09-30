@@ -46,6 +46,7 @@
   let SKY = null;    // sky_obs.json (all-sky camera AI, hourly)
   let LOG = null;    // cruise_log.json (evening forecast + what happened, per cruise night)
   let LAST = null;   // last_night.json (summary of the last finished night up north)
+  let TLOG = null;   // tonight_log.json (tonight's basic answer at every forecast run)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
   let selected = null;
@@ -343,13 +344,17 @@
 
   const CLOUD_SVG = 'M4.2 13.5h7.6a3 3 0 0 0 .3-6 4.2 4.2 0 0 0-8 1.1 2.5 2.5 0 0 0 .1 4.9z';
   const MOON_SVG = 'M9.5 1.8a6 6 0 1 0 4.7 9.4A5 5 0 0 1 9.5 1.8z';
+  // Moon / moon with cloud / cloud: the same small sky icons in the hour table and in the basic hour strip
+  const skyGlyph = (c) => (c <= CLEAR_LINE ? `<path d="${MOON_SVG}" fill="#dfe6ff"/>`
+    : c <= 70 ? `<path d="${MOON_SVG}" fill="#dfe6ff" transform="translate(3 -1) scale(.75)"/><path d="${CLOUD_SVG}" fill="#b4bac4"/>`
+    : `<path d="${CLOUD_SVG}" fill="#8f96a3"/>`);
+
   // Sky cell: icon + word + % on the first line, a 0–100% bar with the 40% line and the distance to it below.
   function sky(cloud, range) {
     if (cloud == null) return '<span class="sky none">no forecast yet</span>';
     const c = Math.round(cloud);
-    const [word, cls, icon] = c <= CLEAR_LINE ? ['Clear', 'clear', `<path d="${MOON_SVG}" fill="#dfe6ff"/>`]
-      : c <= 70 ? ['Broken', 'broken', `<path d="${MOON_SVG}" fill="#dfe6ff" transform="translate(3 -1) scale(.75)"/><path d="${CLOUD_SVG}" fill="#b4bac4"/>`]
-      : ['Overcast', 'overcast', `<path d="${CLOUD_SVG}" fill="#8f96a3"/>`];
+    const [word, cls] = c <= CLEAR_LINE ? ['Clear', 'clear'] : c <= 70 ? ['Broken', 'broken'] : ['Overcast', 'overcast'];
+    const icon = skyGlyph(c);
     const d = c - CLEAR_LINE;
     return `<span class="sky ${cls}">
       <span class="l1"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${icon}</svg>${word} ${c}%${range ? ` <span class="rng">(${range})</span>` : ''}</span>
@@ -1662,8 +1667,42 @@
     const clearH = hrs.filter((h) => h.cloud_met <= CLEAR_LINE).length;
     const sky = !hrs.length ? '–' : clearH >= hrs.length * 0.7 ? 'clear' : clearH ? `clear ${clearH} of ${hrs.length} dark hours` : 'cloudy';
     const win = bestWindow(n);
-    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, sub: `Aurora: ${aurora} · Sky: ${sky}` };
-    return { cls: 'n', big: 'NO', small: act < 0.25 ? 'aurora too weak here' : 'cloudy', sub: `Aurora: ${aurora} · Sky: ${sky}` };
+    const kpTxt = `Kp ${n.activity.kp != null ? n.activity.kp.toFixed(1) : '?'}, ${n.kp_req <= 1 ? `${n.kp_req.toFixed(1)} is enough here` : `about ${n.kp_req.toFixed(0)} needed here`}`;
+    const range = (hh) => { const c = hh.map((h) => Math.round(h.cloud_met)); return `${Math.min(...c)}–${Math.max(...c)}% cloud`; };
+    const actOk = act >= 0.5;
+    let reason;
+    if (win) {
+      const inWin = hrs.filter((h) => hourStatus(h)[0] === win.label);
+      reason = win.label === 'GO'
+        ? `Clear gap ${win.text} (${range(inWin)}) and the activity is enough here (${kpTxt}).`
+        : inWin.every((h) => h.cloud_met <= CLEAR_LINE)
+          ? `Clear ${win.text} (${range(inWin)}), but the activity is borderline here (${kpTxt}).`
+          : `Partly cloudy ${win.text} (${range(inWin)}): gaps are possible. ${actOk ? `The activity is enough here (${kpTxt}).` : `Activity: ${kpTxt}.`}`;
+    } else if (act < 0.25) {
+      reason = `${clearH ? 'Clear gaps are likely' : 'It is cloudy too'}, but the activity is too low here (${kpTxt}).`;
+    } else {
+      reason = `${actOk ? 'The aurora should be active tonight' : 'Some aurora activity is possible'} (${kpTxt}), but MET forecasts ${hrs.length ? range(hrs) : 'cloud'} in the dark hours.`;
+    }
+    if (win) return { cls: win.label === 'GO' ? 'g' : 'y', big: win.label === 'GO' ? 'GO' : 'MAYBE', small: win.text, sub: `Aurora: ${aurora} · Sky: ${sky}`, reason };
+    return { cls: 'n', big: 'NO', small: act < 0.25 ? 'aurora too weak here' : 'cloudy', sub: `Aurora: ${aurora} · Sky: ${sky}`, reason };
+  }
+
+  // "Changed at 15:30: was GO 21:00–23:00 (5–31% cloud), now NO (85–100% cloud)" from the forecast runs of today.
+  function basicChange(date) {
+    const runs = (TLOG && TLOG[date]) || [];
+    if (runs.length < 2) return '';
+    const key = (r) => `${r.verdict}|${r.window || ''}`;
+    const now = runs[runs.length - 1];
+    let i = runs.length - 2;
+    while (i >= 0 && key(runs[i]) === key(now)) i--;
+    if (i < 0) return '';
+    const was = runs[i], at = runs[i + 1].t;
+    if (Date.now() - new Date(at) > 18 * 3600e3) return '';
+    const fmt = (r) => `${r.verdict === 'far' ? pct(r.score) + ' chance' : r.verdict}${r.window ? ' ' + r.window : ''}${r.cloud ? ` (${r.cloud[0]}–${r.cloud[1]}% cloud)` : ''}`;
+    const why = was.cloud && now.cloud && (now.cloud[0] - was.cloud[0] >= 20 || was.cloud[0] - now.cloud[0] >= 20)
+      ? (now.cloud[0] > was.cloud[0] ? ' The newest cloud forecast is cloudier.' : ' The newest cloud forecast is clearer.')
+      : was.kp != null && now.kp != null && Math.abs(now.kp - was.kp) >= 1 ? ' The activity forecast changed.' : '';
+    return `Changed at ${hm(at)}: was ${fmt(was)}, now ${fmt(now)}.${why}`;
   }
   const ratingCls = (r) => ({ GOOD: 'g', FAIR: 'y' }[r] || 'n');
 
@@ -1672,11 +1711,14 @@
     const hrs = n.hourly.filter((h) => h.sun < -3);
     const cells = hrs.map((h, i) => {
       const st = !h.dark ? 't' : h.cloud_met == null ? 'u' : ({ GO: 'g', TRY: 'y' }[hourStatus(h)[0]] || 'n');
-      return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}" data-i="${i}" role="button" tabindex="0"><i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
+      const ico = h.cloud_met != null ? `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(Math.round(h.cloud_met))}</svg>` : '<span class="bico"></span>';
+      return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}" data-i="${i}" role="button" tabindex="0">${ico}<i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
     }).join('');
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
       <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
         hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
+      <div class="blegend bsky"><span>Icons = clouds only:</span>${[[20, 'clear ≤40%'], [55, 'broken ≤70%'], [90, 'overcast']].map(([c, t]) =>
+        `<span><svg viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(c)}</svg>${t}</span>`).join('')}</div>
       <div class="bwhy" id="b-why"><span class="btap">👆 Tap an hour to see why</span></div>`;
   }
 
@@ -1770,6 +1812,19 @@
     return [`${dayLabel(LAST.date)}, up north`, `<span class="${/^Aurora on|^Possible/.test(LAST.headline) ? 'ok2' : ''}">${esc(LAST.headline)}</span>${cl}`];
   }
 
+  // Hourly weather where you are (weather.json "here"): Tromsø before the cruise, the ship's position on board.
+  function basicWeather() {
+    const h = WX && WX.here;
+    if (!h || !h.series || !h.series.length) return '';
+    const rows = h.series.filter((e) => new Date(e.t).getTime() >= Date.now() - 3600e3).filter((_, i) => i % 2 === 0);
+    if (!rows.length) return '';
+    const places = [...new Set(h.series.map((e) => e.place))];
+    return `<div class="b-card"><div class="b-k">Weather here · next 24 hours</div>
+      <div class="bplace-s" style="margin-top:4px">${h.sailing ? `where the ship will be each hour: ${esc(places.join(' → '))}` : 'Tromsø, the practice spot until the cruise starts'}</div>
+      <div class="wx-sum">${wxSummaryLine(h.summary)}</div>${adviceChips(h.advice)}${wxTable(rows, 65)}
+      <p class="hint" style="margin:6px 0 0">Every 2nd hour shown · MET Norway · updated with each forecast run.</p></div>`;
+  }
+
   function renderBasic() {
     const el = $('#basic');
     if (!el || !D) return;
@@ -1784,6 +1839,8 @@
         <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
         <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
+        ${v.reason ? `<div class="breason">${esc(v.reason)}</div>` : ''}
+        ${basicChange(t.n.date) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date))}</div>` : ''}
         <div class="b-sub">${esc(v.sub)} · ${esc(darkText(t.n))}</div>
         ${basicStrip(t.n)}</div>`;
     }
@@ -1801,6 +1858,7 @@
           <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div>
           <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>
       ${ln ? `<div class="b-card"><div class="b-k">Last night · ${ln[0]}</div><div class="blast">${ln[1]}</div></div>` : ''}
+      ${basicWeather()}
       <div class="balerts">🔔 ${s.sailing ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the cruise starts.'}</div>
       <details class="bhow"><summary>How is this decided?</summary>
         <p><b>Where</b>: before the cruise, "tonight" is Tromsø, for practice. On board it follows the ship's planned position hour by hour, from Princess' published itinerary: the port while docked, the route between ports at sea. It is not live GPS, so a change of course or schedule is not known here.</p>
@@ -1809,6 +1867,7 @@
           <span class="k y">maybe</span> cloud ≤70% and aurora chance ≥25% ·
           <span class="k n">no</span> otherwise ·
           <span class="k t">twilight</span> sun 3–12° below the horizon, too bright for faint aurora.
+          The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
           Tap an hour in the strip to see its numbers. The big answer is the longest green stretch (yellow if there is none). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
         <p><b>Aurora now</b> comes from the nearest magnetometer when there is one (Tromsø and Alta area):
@@ -1847,7 +1906,8 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
-      [LOG, LAST] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null)]);
+      [LOG, LAST, TLOG] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null),
+        getJSON('data/tonight_log.json').catch(() => null)]);
       HP30 = newerHp30((D.space_weather && D.space_weather.hp30) || [], hpFile && hpFile.series);
     } catch (e) {
       $('#fresh').innerHTML = '<span class="dot bad"></span>data unavailable';

@@ -660,6 +660,51 @@ def update_cruise_log(now, nights, route):
     save_json(DATA / "cruise_log.json", log, compact=True)
 
 
+# ---------------------------------------------------------------- tonight log
+# The basic view's answer for tonight (cruise night on board, Tromsø before the cruise) at every run,
+# so the page can say "changed at 15:30: was GO 21-23, now NO" and why (the clouds).
+
+def tonight_answer(n):
+    dark = [h for h in n["hourly"] if h["dark"] and h["cloud_met"] is not None]
+    clouds = [round(h["cloud_met"]) for h in dark]
+    out = {"cloud": [min(clouds), max(clouds)] if clouds else None,
+           "kp": n["activity"]["kp"], "need": n["kp_req"]}
+    if not n["clear"]["source"].startswith("MET Norway"):
+        return {**out, "verdict": "far", "window": None, "score": n["score"]}
+    st = [hour_verdict(h) for h in n["hourly"]]
+    for want in ("GO", "TRY"):
+        best, i = None, 0
+        while i < len(st):
+            if st[i] != want:
+                i += 1
+                continue
+            j = i
+            while j + 1 < len(st) and st[j + 1] == want:
+                j += 1
+            if not best or j - i > best[1] - best[0]:
+                best = (i, j)
+            i = j + 1
+        if best:
+            end = parse_utc(n["hourly"][best[1]]["t"]) + timedelta(hours=1)
+            return {**out, "verdict": "GO" if want == "GO" else "MAYBE",
+                    "window": f"{n['hourly'][best[0]]['local']}–{local_hm(end)}", "score": n["score"]}
+    return {**out, "verdict": "NO", "window": None, "score": n["score"]}
+
+
+def log_tonight(now, nights, mc):
+    local = now + timedelta(hours=SHIP_UTC_OFFSET)
+    d = (local - timedelta(days=1) if local.hour < 6 else local).date().isoformat()
+    n = next((x for x in nights if x["date"] == d), None) \
+        or next((x for x in mc["nights"] if x["date"] == d and x.get("spot") == "Tromsø"), None)
+    if not n:
+        return
+    log = load_json(DATA / "tonight_log.json", {}) or {}
+    runs = log.setdefault(d, [])
+    runs.append({"t": iso(now), **tonight_answer(n)})
+    keep = sorted(log)[-3:]
+    save_json(DATA / "tonight_log.json", {k: log[k] for k in keep}, compact=True)
+
+
 # ---------------------------------------------------------------- main
 
 def main():
@@ -683,6 +728,10 @@ def main():
     met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
     update_cruise_log(now, nights, route)
+    try:
+        log_tonight(now, nights, mc)
+    except Exception as e:  # the log is a nice-to-have
+        print("tonight log failed:", e)
     try:
         last_night.write(now)
     except Exception as e:  # a summary problem must not stop the forecast
