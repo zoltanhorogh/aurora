@@ -981,6 +981,7 @@
       const now = at(0);
       if (!now) throw new Error('no data');
       LIVE.drift = `toward the ${word(now.dir)}`;
+      LIVE.from = COMPASS[Math.round(now.dir / 45) % 8]; // wind direction = where new clouds come from
       basicRefresh();
       const later = [3, 6].map(at).filter(Boolean);
       box.innerHTML = `<div class="satwind-now">${arrow(now.dir, 44)}<div><div class="v">Clouds moving toward the ${word(now.dir)}</div>
@@ -1638,13 +1639,30 @@
   function basicStrip(n) {
     const now = Date.now();
     const hrs = n.hourly.filter((h) => h.sun < -3);
-    const cells = hrs.map((h) => {
+    const cells = hrs.map((h, i) => {
       const st = !h.dark ? 't' : h.cloud_met == null ? 'u' : ({ GO: 'g', TRY: 'y' }[hourStatus(h)[0]] || 'n');
-      return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}"><i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
+      return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}" data-i="${i}" role="button" tabindex="0"><i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
     }).join('');
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
-      <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight</span>${
-        hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>`;
+      <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
+        hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
+      <div class="bwhy" id="b-why">Tap an hour to see why.</div>`;
+  }
+
+  // Why an hour of the strip has its colour, in one line.
+  function basicWhy(h, n) {
+    const head = `<b>${h.local}</b> · `;
+    const sun = `sun ${h.sun}°`;
+    if (!h.dark) return `${head}<span class="k t">twilight</span> ${sun} (dark below −12°): too bright for faint aurora`;
+    if (h.cloud_met == null) return `${head}not forecast yet: MET Norway's hourly forecast reaches this hour ${metFromText(n) ? `from ${metFromText(n)}` : 'in a later run'}`;
+    const lab = hourStatus(h)[0];
+    const cloud = `cloud ${Math.round(h.cloud_met)}%`;
+    const act = `aurora chance ${pct(h.p_act)} (Kp forecast ${h.kp.toFixed(1)}, needed here ${h.kp_req.toFixed(1)})`;
+    const why = lab === 'GO' ? `${cloud} (≤40%) and ${act}`
+      : lab === 'TRY' ? (h.cloud_met > CLEAR_LINE ? `${cloud}: more than 40% but ≤70%, gaps likely · ${act}` : `${cloud} (≤40%), but ${act} is only 25–50%`)
+      : h.p_act < 0.25 ? `${act}: below 25%` : `${cloud}: more than 70%`;
+    const word = { GO: ['g', 'go'], TRY: ['y', 'maybe'] }[lab] || ['n', 'no'];
+    return `${head}<span class="k ${word[0]}">${word[1]}</span> ${why} · ${sun}`;
   }
 
   // Aurora now: the nearest fresh FMI magnetometer when there is one (up north), else Kp / Hp30 / OVATION.
@@ -1676,9 +1694,16 @@
 
   function basicSky(n) {
     const now = Date.now();
-    const drift = LIVE.drift ? ` · clouds drifting ${LIVE.drift}` : '';
+    const drift = LIVE.from ? ` · new clouds come from the ${LIVE.from}` : '';
     const h0 = n && n.hourly.find((h) => Math.abs(new Date(h.t) - now) <= 1800e3 && h.cloud_met != null);
-    if (!h0) return ['', 'Daytime', `tonight's sky is in the strip above${drift}`];
+    if (!h0) {
+      // daytime: tonight's sky in one line
+      const dark = n ? n.hourly.filter((h) => h.dark && h.cloud_met != null) : [];
+      if (!dark.length) return ['', 'Daytime', `no cloud forecast for tonight yet${drift}`];
+      const clear = dark.filter((h) => h.cloud_met <= CLEAR_LINE);
+      return [clear.length ? 'ok2' : '', clear.length ? `Tonight: clear from ${clear[0].local}` : 'Tonight: cloudy',
+        `${clear.length} of ${dark.length} dark hours clear (MET)${drift}`];
+    }
     const c = Math.round(h0.cloud_met);
     const next = n.hourly.filter((h) => new Date(h.t) > now && new Date(h.t) - now <= 4 * 3600e3 && h.cloud_met != null);
     const clearing = c > CLEAR_LINE && next.find((h) => h.cloud_met <= CLEAR_LINE);
@@ -1724,7 +1749,9 @@
     if (t) {
       const v = basicVerdict(t.n);
       tonight = `<div class="b-card">
-        <div class="b-k">Tonight · ${dayLabel(t.n.date)} · ${esc(t.practice ? 'Tromsø (practice before the cruise)' : shortPlace(t.n.place))}</div>
+        <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
+        <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
+        <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="b-sub">${esc(v.sub)} · ${esc(darkText(t.n))}</div>
         ${basicStrip(t.n)}</div>`;
@@ -1740,10 +1767,37 @@
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>
       <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'}</div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
-          <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div><div class="bar ${ratingCls(n.rating)}"></div></button>`).join('')}</div></div>
+          <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div>
+          <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>
       ${ln ? `<div class="b-card"><div class="b-k">Last night · ${ln[0]}</div><div class="blast">${ln[1]}</div></div>` : ''}
       <div class="balerts">🔔 ${s.sailing ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the cruise starts.'}</div>
+      <details class="bhow"><summary>How is this decided?</summary>
+        <p><b>Where</b>: before the cruise, "tonight" is Tromsø, for practice. On board it follows the ship's planned position hour by hour, from Princess' published itinerary: the port while docked, the route between ports at sea. It is not live GPS, so a change of course or schedule is not known here.</p>
+        <p><b>Tonight, hour by hour</b> (MET Norway's local forecast, about 2.5 days ahead):
+          <span class="k g">go</span> dark, cloud ≤40% and aurora chance ≥50% ·
+          <span class="k y">maybe</span> cloud ≤70% and aurora chance ≥25% ·
+          <span class="k n">no</span> otherwise ·
+          <span class="k t">twilight</span> sun 3–12° below the horizon, too bright for faint aurora.
+          Tap an hour in the strip to see its numbers. The big answer is the longest green stretch (yellow if there is none). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
+          Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
+        <p><b>Aurora now</b> comes from the nearest magnetometer when there is one (Tromsø and Alta area):
+          <b>Quiet</b> = calm field ·
+          <b>Charging ↑</b> = in the evening the field has risen 40+ nT above its quiet level: energy is building up, a substorm often follows later in the night (in last season's data 86% of such evenings, usually 01–03 h) ·
+          <b>Active</b> = it dropped 50+ nT within half an hour: aurora is moving overhead now ·
+          <b>Strong</b> = 200+ nT: a big display.
+          Where there is no magnetometer (further south): <b>Active</b> when Kp/Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it just reaches the level.
+          <b>Daylight</b> = the sun is less than 6° below the horizon.</p>
+        <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
+        <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
+      </details>
       <a href="#" class="badv" id="b-adv">Advanced view: all numbers, charts and explanations →</a>`;
+    if (t) {
+      const hrs = t.n.hourly.filter((h) => h.sun < -3);
+      el.querySelectorAll('.bstrip > div').forEach((c) => c.addEventListener('click', () => {
+        el.querySelectorAll('.bstrip > div').forEach((x) => x.classList.toggle('sel', x === c));
+        $('#b-why').innerHTML = basicWhy(hrs[+c.dataset.i], t.n);
+      }));
+    }
     el.querySelectorAll('.bnc').forEach((b) => b.addEventListener('click', () => setMode('advanced', () => {
       selected = b.dataset.date;
       renderCards();

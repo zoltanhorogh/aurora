@@ -122,6 +122,12 @@ INJECT = r"""<script>
       check('basic view shown', document.body.classList.contains('basic-mode') && b && b.offsetHeight > 100);
       check('basic view has tonight and right now', /Tonight/.test(b.textContent) && /Right now/.test(b.textContent)
         && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
+      const cell = b.querySelector('.bstrip > div');
+      if (cell) {
+        cell.click();
+        await sleep(100);
+        check('basic hour strip explains an hour', /\d\d:\d\d/.test(document.querySelector('#b-why').textContent) && !/Tap an hour/.test(document.querySelector('#b-why').textContent));
+      }
       const card = b.querySelector('.bnc');
       if (card) {
         card.click();
