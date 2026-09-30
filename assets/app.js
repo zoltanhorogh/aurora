@@ -236,7 +236,7 @@
     const alerts = (L.alerts || []).map((a) => `${a.kind}${a.count > 1 ? ` ×${a.count}` : ''} (${a.last})`).join(' · ');
     const row = (k, v) => (v ? `<div class="ln-row"><span class="k">${k}</span><span>${v}</span></div>` : '');
     el.style.display = '';
-    el.innerHTML = `<h3 style="margin:0 0 2px">Last night up north <span class="why">· ${shortDay(L.date)}–${shortDay(new Date(new Date(L.date + 'T12:00:00Z').getTime() + 864e5).toISOString().slice(0, 10))}, 18:00–06:00</span></h3>
+    el.innerHTML = `<summary><b>Last night up north</b> <span class="why">· ${shortDay(L.date)}–${shortDay(new Date(new Date(L.date + 'T12:00:00Z').getTime() + 864e5).toISOString().slice(0, 10))}, 18:00–06:00</span></summary>
       <div class="pastres ${/^Aurora on|^Possible/.test(L.headline) ? 'ok' : 'why'}" style="margin:4px 0 8px">${esc(L.headline)}</div>
       ${row('Cameras', cams)}${row('Magnetometers', mag)}${row('Activity', L.hp30 ? `Hp30 max ${L.hp30.max.toFixed(1)} at ${L.hp30.at}` : '')}
       ${row('Clouds (MET)', clouds)}${row('Alerts sent', alerts)}
@@ -756,6 +756,7 @@
     const cmes = sw.cmes || [];
     $('#swpc-text').innerHTML = `
       <h3>What the forecasters say</h3>
+      <p class="hint" style="margin-top:0">The written forecast of NOAA's space weather forecasters (the people, not a model): the week ahead, the next 3 days, and solar eruptions heading to Earth.</p>
       <p><b>NOAA weekly forecast</b> (${esc(w.period || '')}, issued ${esc(w.issued || '–')}):<br>${esc(w.geomagnetic || 'not available')}</p>
       <p class="hint">Jargon: "CH HSS" = fast solar wind from a coronal hole, the typical source of moderate aurora activity at this stage of the solar cycle. "Unsettled/active" ≈ Kp 3–4, "G1" = Kp 5.</p>
       <p><b>Solar eruptions (CMEs) heading to Earth:</b> ${cmes.length ? '' : 'none in NASA\'s model runs from the last 7 days.'}</p>
@@ -1326,7 +1327,8 @@
     };
     // What the all-sky camera AI saw that night (Tromsø camera for Tromsø, Skibotn camera for Alta).
     const camCell = (r) => {
-      const site = r.spot === 'Tromsø' ? 'tromso' : 'skibotn';
+      if (r.spot !== 'Tromsø') return '<span class="why">– no camera nearby</span>'; // Skibotn is ~140 km from Alta
+      const site = 'tromso';
       const hrs = SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date][site];
       if (!hrs) return '<span class="why">–</span>';
       const list = Object.entries(hrs).sort(([a], [b]) => hourOrder(a, b));
@@ -1385,14 +1387,15 @@
       <p class="hint" style="margin-top:0">${esc(mc.note)} Compare with Norway Lights or yr.no, or just look outside.</p>
       <div class="daytabs">${days.map((d, i) => `<button class="btn ${i === checkDay ? 'on' : ''}" data-day="${i}">${tabName(i)} <span class="why">${shortDay(d)}</span></button>`).join('')}</div>
       <div class="tbl-wrap"><table>
-        <tr><th>${dayLabel(days[checkDay])}</th><th>Chance</th><th>Best window</th><th>${checkDay === 0 ? 'MET cloud now*' : 'Cloud source'}</th></tr>
+        <tr><th>${dayLabel(days[checkDay])}</th><th>Chance</th><th>Best window</th><th>${checkDay === 0 ? 'MET cloud' : 'Cloud source'}</th></tr>
         ${checkNights().map((n, i) => {
           const w = bestWindow(n);
-          const last = checkDay === 0 ? (nowRow(n).cloud_met != null ? Math.round(nowRow(n).cloud_met) + '%' : '–') : esc(n.clear.source);
+          // the forecast hour closest to now (the night's hours start at 17:00), with its time so it is not read as "now"
+          const r = nowRow(n);
+          const last = checkDay === 0 ? (r.cloud_met != null ? `${Math.round(r.cloud_met)}% <span class="why">at ${r.local}</span>` : '–') : esc(n.clear.source);
           return `<tr class="pick ${i === checkSpot ? 'sel' : ''}" data-i="${i}"><td>${esc(n.spot)}</td><td>${pct(n.score)} ${chip(n.rating)}</td><td>${w ? `${w.text} ${w.label}` : metCovers(n) ? 'none' : `<span class="why">not yet${metFromText(n) ? ` · from ${metFromText(n)}` : ''}</span>`}</td><td>${last}</td></tr>`;
         }).join('')}
       </table></div>
-      <p class="hint">Tap a row to switch spot. ${checkDay === 0 ? `*At the last update (${ago(D.generated)}); live Kp is in the Live section. ` : ''}Sources last run: ${Object.entries(D.sources).map(([k, v]) => `${esc(k)} ${v.ok ? '✓' : '✕'}`).join(' · ')}</p>
       <div id="check-detail" style="border-top:1px solid var(--border);padding-top:12px"></div>
       ${verificationTable()}`;
     body.querySelectorAll('tr.pick').forEach((tr) => tr.addEventListener('click', () => { checkSpot = +tr.dataset.i; renderCheck(); }));
@@ -1573,6 +1576,7 @@
   }
 
   function navSpy() {
+    $('#tabs a[href="#check"]').addEventListener('click', () => { const p = $('#check-panel'); if (!p.open) p.open = true; });
     trackHeader();
     $('#home').addEventListener('click', (ev) => {
       ev.preventDefault();
