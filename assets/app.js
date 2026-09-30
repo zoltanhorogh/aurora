@@ -45,6 +45,7 @@
   let WX = null;     // weather.json
   let SKY = null;    // sky_obs.json (all-sky camera AI, hourly)
   let LOG = null;    // cruise_log.json (evening forecast + what happened, per cruise night)
+  let LAST = null;   // last_night.json (summary of the last finished night up north)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
   let selected = null;
@@ -218,6 +219,30 @@
     return { head, cls, lines, rec, o, f, cam };
   }
 
+  // ------------------------------------------------------------ last night up north
+  function renderLastNight() {
+    const el = $('#last-night');
+    if (!el) return;
+    if (!LAST || !LAST.date) { el.style.display = 'none'; return; }
+    const L = LAST;
+    const hs = (hours) => hours.reduce((g, h) => ((g.length && (+g[g.length - 1][g[g.length - 1].length - 1] + 1) % 24 === +h)
+      ? (g[g.length - 1].push(h), g) : [...g, [h]]), []).map((x) => `${x[0]}–${pad((+x[x.length - 1] + 1) % 24)}`).join(', ');
+    const mag = (L.mag || []).map((m) => `${esc(m.name)} ${m.min} nT at ${m.at} <span class="why">(${m.level})</span>`).join(' · ');
+    const cams = (L.cams || []).map((c) => `${esc(c.name)}: ${c.aurora.length ? `<span class="ok">aurora ${hs(c.aurora)}</span>`
+      : c.possible.length ? `<span class="ok">possible aurora ${hs(c.possible)}</span> <span class="why">(bright sky)</span>`
+      : c.cloudy * 2 >= c.checked ? 'cloudy' : c.bright * 2 >= c.checked ? 'bright sky (moon)' : c.clear ? 'clear, no aurora' : 'mixed'}`).join(' · ');
+    const clouds = (L.clouds || []).map((c) => `${esc(c.spot)}: ${c.clear_dark == null ? '<span class="why">MET analysis after the morning update</span>'
+      : c.clear_dark.length ? `<span class="ok">clear ${c.clear_dark[0]}–${c.clear_dark[c.clear_dark.length - 1]}</span>` : 'cloudy all night'}`).join(' · ');
+    const alerts = (L.alerts || []).map((a) => `${a.kind}${a.count > 1 ? ` ×${a.count}` : ''} (${a.last})`).join(' · ');
+    const row = (k, v) => (v ? `<div class="ln-row"><span class="k">${k}</span><span>${v}</span></div>` : '');
+    el.style.display = '';
+    el.innerHTML = `<h3 style="margin:0 0 2px">Last night up north <span class="why">· ${shortDay(L.date)}–${shortDay(new Date(new Date(L.date + 'T12:00:00Z').getTime() + 864e5).toISOString().slice(0, 10))}, 18:00–06:00</span></h3>
+      <div class="pastres ${/^Aurora on|^Possible/.test(L.headline) ? 'ok' : 'why'}" style="margin:4px 0 8px">${esc(L.headline)}</div>
+      ${row('Cameras', cams)}${row('Magnetometers', mag)}${row('Activity', L.hp30 ? `Hp30 max ${L.hp30.max.toFixed(1)} at ${L.hp30.at}` : '')}
+      ${row('Clouds (MET)', clouds)}${row('Alerts sent', alerts)}
+      <p class="hint" style="margin:6px 0 0">Cameras: all-sky camera AI, checked hourly · magnetometers: lowest point vs quiet level (−50 active, −200 strong) · clouds: MET Norway's analysis afterwards.</p>`;
+  }
+
   function renderCards() {
     const t = tonightDate();
     $('#night-cards').innerHTML = D.nights.map((n) => isPast(n) ? (() => {
@@ -379,11 +404,11 @@
 
   function hoursTable(n) {
     const hasMet = metCovers(n);
-    const rows = n.hourly.filter((h) => h.sun < -3 && (metFull(n) || h.cloud_met != null));
+    const rows = n.hourly.filter((h) => h.sun < -3 && h.cloud_met != null);
     const lastT = rows.length ? rows[rows.length - 1].t : '';
     const events = (n.events || []).filter((e) => (e.kind === 'depart' || e.kind === 'arrive') && (metFull(n) || e.t <= lastT));
     const win = hasMet ? bestWindow(n) : null;
-    let html = `<div class="hr head"><span>Time</span><span>Verdict</span><span>Sky · ${hasMet ? 'MET' : 'models'}</span><span class="kp">Kp fc ≥ need</span></div>`;
+    let html = `<div class="hr head"><span>Time</span><span>Verdict</span><span>Sky · MET</span><span class="kp">Kp fc ≥ need</span></div>`;
     const evRow = (e) => `<div class="ev">${evIcon(e.kind)}${esc(e.label)} ${e.local}</div>`;
     rows.forEach((h) => {
       while (events.length && events[0].t <= h.t) html += evRow(events.shift());
@@ -397,9 +422,16 @@
       html += `<div class="hr ${cls} ${met ? '' : 'lowskill'}"><span class="tm">${h.local}</span><span class="st ${cls}">${lab}</span>${cell}<span class="kp">${right}</span></div>`;
     });
     html += events.map(evRow).join('');
-    if (hasMet && !metFull(n)) html += `<div class="ev">⏳ Later hours: MET Norway reaches them ${metFromText(n) ? `from ${metFromText(n)} ship time` : 'in a later run'}</div>`;
-    // Before MET covers the night the global models have no skill hour by hour: show no hour rows.
-    if (!hasMet) return `<h3 style="margin-top:16px">Hour by hour</h3>${sunStrip(n)}${farSummary(n)}`;
+    if (!metFull(n) && rows.some((h) => h.dark)) html += `<div class="ev">⏳ Later hours: MET Norway reaches them ${metFromText(n) ? `from ${metFromText(n)} ship time` : 'in a later run'}</div>`;
+    // Before MET covers the night the global models have no skill hour by hour: no model rows. If MET already
+    // reaches the first dark hours, those are shown (the night's chance still comes from the global models).
+    if (!hasMet) {
+      const firstHours = rows.some((h) => h.dark)
+        ? `<div class="ailabel" style="margin-top:12px">First hours from MET Norway</div><div class="hours2">${html}</div>
+           <div class="srcline">These hours already come from MET Norway (no 2-hour clear gap in them yet); the chance for the night still uses the global models until MET reaches the rest.</div>`
+        : '';
+      return `<h3 style="margin-top:16px">Hour by hour</h3>${sunStrip(n)}${farSummary(n)}${firstHours}`;
+    }
     const body = `
       ${win ? `<div class="win ${win.label === 'GO' ? 'go' : 'try'}">★ Best window ${win.text} · ${win.label}</div>` : '<div class="win none">No good window tonight.</div>'}
       <div class="hours2">${html}</div>
@@ -500,10 +532,9 @@
     g += '<g class="hl"></g>';
     // Cloud bars: MET Norway where available (solid), otherwise the global-model average (faded) — same as the table.
     // Before MET covers the night, no model bars at all: hour by hour they have no skill that far out.
-    const covered = metFull(n);
     hours.forEach((h, i) => {
       const met = h.cloud_met != null;
-      const v = met ? h.cloud_met : covered ? h.cloud_mean : null;
+      const v = met ? h.cloud_met : null; // no model bars: hours already past, or not reached by MET yet
       if (v == null) return;
       const cx = ml + i * bw + bw / 2, w = Math.max(5, bw * 0.46);
       g += `<path d="${roundTopBar(cx - w / 2, y(v), w, y(0) - y(v))}" fill="#3987e5" opacity="${met ? 1 : 0.35}"/>`;
@@ -1480,7 +1511,7 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
-      LOG = await getJSON('data/cruise_log.json').catch(() => null);
+      [LOG, LAST] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null)]);
       HP30 = newerHp30((D.space_weather && D.space_weather.hp30) || [], hpFile && hpFile.series);
     } catch (e) {
       $('#fresh').innerHTML = '<span class="dot bad"></span>data unavailable';
@@ -1491,7 +1522,7 @@
     const wanted = new URLSearchParams(location.search).get('night');
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     startLiveRefresh();
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });

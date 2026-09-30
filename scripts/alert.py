@@ -326,6 +326,18 @@ def main():
                 state["last_alert"] = iso(now)
                 state["last_level"] = level
                 changed = True
+        elif activity_ok:
+            # Cloudy here, but forecasts miss gaps and the ship moves: one quieter heads-up per night,
+            # a second one only if it turns strong.
+            night = night_key(now)
+            c = state.get("cloudy") or {}
+            if c.get("night") != night or (strong and c.get("level") == "watch"):
+                send("☁️ Aurora active, cloudy here — look for gaps",
+                     f"{pos['place']}: forecast cloud {cloud if cloud is not None else '?'}%. "
+                     f"Worth a look outside for breaks in the cloud. {fmt_live(lv, req)}",
+                     priority=3, tags=["cloud"], dry=args.dry_run, click=tonight_link(now))
+                state["cloudy"] = {"night": night, "level": "strong" if strong else "watch", "at": iso(now)}
+                changed = True
 
     if changed and not args.dry_run:
         save_json(DATA / "alert_state.json", state)

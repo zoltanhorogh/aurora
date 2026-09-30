@@ -4,6 +4,7 @@ import re
 import traceback
 from datetime import datetime, timedelta
 
+import last_night
 from common import (CONFIG, DATA, UTC, Route, fetch_hp30, http_get, http_get_json, iso, kp_required,
                     load_json, mag_lat, moon_alt, moon_illum, night_dates, night_hours,
                     norm_cdf, parse_utc, save_json, sun_alt, utcnow)
@@ -189,7 +190,7 @@ def met_expected(nights, now):
     ends = sorted(MET_HOURLY_END)
     reach = (ends[len(ends) // 2] - now) if ends else timedelta(hours=60)
     for n in nights:
-        dark = [h for h in n["hourly"] if h["dark"]]
+        dark = [h for h in n["hourly"] if h["dark"] and parse_utc(h["t"]) >= now - timedelta(hours=1)]
         if n["clear"]["source"] == "MET Norway" or not dark:
             continue
         # covered once 80% of the dark hours are inside MET's hourly range (same rule as score_night)
@@ -386,9 +387,11 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     # before that, from the global ensembles + October climate.
     p_met = met_note = None
     cloud_source = "models"
-    met_vals = [r["cloud_met"] for r in dark]
-    if dark and sum(v is not None for v in met_vals) >= 0.8 * len(dark):
-        start = next((dark[i]["local"] for i in range(len(dark) - 1)
+    # Only the dark hours still ahead count: MET's forecast starts now, hours already past have no value.
+    ahead = [r for r in dark if parse_utc(r["t"]) >= now - timedelta(hours=1)] or dark
+    met_vals = [r["cloud_met"] for r in ahead]
+    if ahead and sum(v is not None for v in met_vals) >= 0.8 * len(ahead):
+        start = next((ahead[i]["local"] for i in range(len(ahead) - 1)
                       if all(v is not None and v <= CLEAR_MAX for v in met_vals[i:i + 2])), None)
         if start:
             p_met, met_note = 0.9, f"clear gap from {start}"
@@ -398,14 +401,14 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             p_met, met_note = 0.05, "no clear gap"
         p_clear = p_met
         cloud_source = "MET Norway"
-    elif dark:
+    elif ahead:
         # MET reaches only the first part of the night yet. A clear gap already there is real
         # information (the clear-sky definition is met); without one, the rest of the night is unknown.
-        start = next((dark[i]["local"] for i in range(len(dark) - 1)
+        start = next((ahead[i]["local"] for i in range(len(ahead) - 1)
                       if all(v is not None and v <= CLEAR_MAX for v in met_vals[i:i + 2])), None)
         if start:
             last = max(i for i, v in enumerate(met_vals) if v is not None)
-            p_met, met_note = 0.9, f"clear gap from {start} (MET reaches {dark[last]['local']} so far)"
+            p_met, met_note = 0.9, f"clear gap from {start} (MET reaches {ahead[last]['local']} so far)"
             p_clear = p_met
             cloud_source = "MET Norway (partial)"
 
@@ -680,6 +683,10 @@ def main():
     met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
     update_cruise_log(now, nights, route)
+    try:
+        last_night.write(now)
+    except Exception as e:  # a summary problem must not stop the forecast
+        print("last night summary failed:", e)
     # Measured Hp30 over the whole Kp chart (last week), drawn over NOAA's 3-hourly Kp; the last 24 h feed the live tile.
     hp30_week = fetch_hp30_since(parse_utc(kp3[0]["t"]) if kp3 else now - timedelta(days=7), now) or []
     hp30 = [p for p in hp30_week if parse_utc(p[0]) >= now - timedelta(hours=24)]

@@ -123,6 +123,9 @@ def main():
                       f"{round(prev[n['date']]['score'] * 100)}% → {round(n['score'] * 100)}%" for n in moves]
         elif pcts:
             parts.append(f"Arctic nights {min(pcts)}–{max(pcts)}%, no big change")
+        ln = load_json(DATA / "last_night.json", {}) or {}
+        if ln.get("text") and ln.get("date") == (local.date() - timedelta(days=1)).isoformat():
+            parts.append(ln["text"])
         send("🌅 Aurora outlook", " · ".join(parts), priority=3, tags=["sunrise"], click=link(best["date"]), dry=args.dry_run)
         state.update(digest_date=today, digest_values=cur)
         changed = True

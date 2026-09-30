@@ -64,7 +64,7 @@ INJECT = r"""<script>
     const rows = root.querySelectorAll('.hours2 .hr:not(.head)').length;
     check(label + ': detail rendered', root.textContent.trim().length > 80);
     if (far) {
-      check(label + ': far night has no hour rows', !root.querySelector('.hours2'));
+      check(label + ': far night shows only MET hours', !root.querySelector('.hours2') || /First hours from MET Norway/.test(root.textContent));
       check(label + ': far night does not say "No good window"', !/No good window/.test(root.textContent));
     } else {
       check(label + ': MET night has hour rows', rows > 0, rows + ' rows');
@@ -111,6 +111,8 @@ INJECT = r"""<script>
     $$('details').forEach((d) => { d.open = true; });
     await sleep(400);
     check('live tiles rendered', $$('#live-tiles .tile').length >= 7);
+    const ln = document.querySelector('#last-night');
+    check('last night panel rendered (or hidden without data)', ln && (ln.style.display === 'none' || /Last night up north/.test(ln.textContent)));
     const out = document.createElement('script');
     out.type = 'application/json';
     out.id = 'pf-result';
@@ -226,7 +228,7 @@ def main():
             days, it_s = shifted_config(tmp / "config-ship")
             env = {**base_env, "AURORA_DATA": str(data_ship), "AURORA_CONFIG": str(tmp / "config-ship")}
             label = f"cruise moved {days} days (in Tromsø today)"
-            for name, a in [("update.py", []), ("weather.py", []), ("sky_log.py", []), ("mag_log.py", []),
+            for name, a in [("update.py", []), ("weather.py", []), ("sky_log.py", []), ("mag_log.py", []), ("last_night.py", []),
                             ("notify.py", ["--dry-run"]), ("alert.py", ["--dry-run"])]:
                 run_script(name, a, env, problems, label)
             tonight = (now + timedelta(hours=2)).replace(hour=19, minute=0, second=0, microsecond=0)
