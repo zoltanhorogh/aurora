@@ -556,6 +556,15 @@
       const cx = ml + i * bw + bw / 2, w = Math.max(5, bw * 0.46);
       g += `<path d="${roundTopBar(cx - w / 2, y(v), w, y(0) - y(v))}" fill="#3987e5" opacity="${met ? 1 : 0.35}"/>`;
     });
+    // Hours MET has not reached yet: say on the chart when their clouds arrive
+    const todo = hours.map((h, i) => [h, i]).filter(([h]) => h.dark && h.cloud_met == null && new Date(h.t).getTime() + 3600e3 > Date.now());
+    if (todo.length && !metFull(n)) {
+      const a = ml + todo[0][1] * bw, b = ml + (todo[todo.length - 1][1] + 1) * bw;
+      const when = metFromText(n) ? `from ${metFromText(n)}` : 'about 2.5 days before';
+      const none = hours.every((h) => h.cloud_met == null);
+      g += `<text x="${(a + b) / 2}" y="${y(88)}" text-anchor="middle" style="fill:#9fb4cc;font-size:12px">${none ? 'Hourly clouds' : 'Clouds for these hours'} ${when}</text>`;
+      g += `<text x="${(a + b) / 2}" y="${y(88) + 16}" text-anchor="middle" style="fill:#9fb4cc;font-size:11px;opacity:.8">(MET Norway, ship time)</text>`;
+    }
     g += `<line x1="${ml}" x2="${W - mr}" y1="${y(CLEAR_LINE)}" y2="${y(CLEAR_LINE)}" stroke="#fff" stroke-width="1.5" stroke-dasharray="5 4"/>`;
     g += `<text class="ref" x="${ml + 4}" y="${y(CLEAR_LINE) - 5}">clear line 40%</text>`;
     // Kp needed here (dashed) and Kp forecast (solid), both on the right axis
@@ -1761,11 +1770,19 @@
   // Activity numbers stand out as violet chips: outlined = forecast, filled = measured
   const kpChip = (v, kind = 'forecast') => `<span class="kp">Kp ${v.toFixed(1)} ${kind}</span>`;
   const hpChip = (v) => `<span class="kp">Hp30 ${v.toFixed(1)} measured</span>`;
+  // One measured value per hour: Hp30 (half-hourly, same 0-9 scale as Kp), NOAA's 3-hour Kp only when Hp30 is missing
+  const measChip = (hp, kp, need) => (hp != null ? hpChip(hp) + vsNeed([hp], need) : kp != null ? kpChip(kp, 'measured') + vsNeed([kp], need) : '');
   // Measured Kp of the 3-hour blocks overlapping [a, b): NOAA's observed/estimated values, never its forecast
   const kpObs = (a, b) => {
     const v = ((D.space_weather && D.space_weather.kp_3day) || []).filter((r) => r.kind !== 'predicted'
       && new Date(r.t).getTime() < b && new Date(r.t).getTime() + 3 * 3600e3 > a).map((r) => r.kp);
     return v.length ? Math.max(...v) : null;
+  };
+  // Measured activity against what this place needs: "enough" or "below"
+  const vsNeed = (vals, need) => {
+    const v = vals.filter((x) => x != null);
+    if (!v.length || need == null) return '';
+    return Math.max(...v) >= need ? ` → <b class="vs ok">enough</b> (${need.toFixed(1)} needed here)` : ` → <b class="vs">below</b> the ${need.toFixed(1)} needed here`;
   };
   // the freshest series plus the week kept in latest.json, so older nights still have their values
   const hp30All = () => [...((D && D.space_weather && D.space_weather.hp30_week) || []), ...(HP30 || [])];
@@ -1779,7 +1796,7 @@
     const t0 = new Date(h.t).getTime();
     const over = t0 + 3600e3 <= Date.now();
     const hp = over ? hp30In(t0) : null, kpm = over ? kpObs(t0, t0 + 3600e3) : null;
-    const meas = (kpm != null ? ` · ${kpChip(kpm, 'measured')}` : '') + (hp != null ? ` · ${hpChip(hp)}` : '');
+    const meas = hp != null || kpm != null ? ` · ${measChip(hp, kpm, h.kp_req)}` : '';
     if (!h.dark) return `${head}<span class="k t">twilight</span> too bright for faint aurora${meas}`;
     if (h.cloud_met == null) {
       return t0 + 3600e3 < Date.now() ? `${head}this hour is over and no forecast was kept for it${meas}`
@@ -1904,8 +1921,8 @@
       const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
       st.series.dev.forEach((v, i) => { const x = s0 + i * step; if (v != null && x >= t0 && x < t1 && (magMin == null || v < magMin)) magMin = v; });
     }
-    const lvl = [kpMax != null ? `Kp max ${kpMax.toFixed(1)}` : '', hpMax != null ? `Hp30 max ${hpMax.toFixed(1)}` : ''].filter(Boolean).join(' · ');
-    const act = [lvl ? `${Math.max(hpMax ?? 0, kpMax ?? 0) >= 2 ? 'active' : 'quiet'} night (${lvl})` : '', magMin != null && magMin <= -50 ? `magnetometer ${magMin} nT` : '']
+    const top = hpMax != null ? ['Hp30', hpMax] : kpMax != null ? ['Kp', kpMax] : null;
+    const act = [top ? `${top[1] >= 2 ? 'active' : 'quiet'} night (${top[0]} max ${top[1].toFixed(1)})` : '', magMin != null && magMin <= -50 ? `magnetometer ${magMin} nT` : '']
       .filter(Boolean).join(', ');
     // MET's analysis of the clouds afterwards
     const obs = cruiseN ? LOG && LOG.nights && LOG.nights[date] && LOG.nights[date].observed
@@ -1924,7 +1941,7 @@
     const aur = hereA.length ? { cls: 'ok', word: '✓ Overhead', sub: `${here.name} camera: aurora ${span(hereA)}${act ? ' · ' + act : ''}` }
       : nearby.length ? { cls: 'mid', word: 'Seen nearby', sub: `${act ? act + ' · ' : ''}cameras: ${nearby.map((c) => `${c.name} ${span(auroraH(c))}`).join(', ')}` }
       : cams.length ? { cls: 'bad', word: 'None seen', sub: act || 'cameras saw no aurora' }
-      : { cls: 'mid', word: act ? (Math.max(hpMax ?? 0, kpMax ?? 0) >= 2 ? 'Active' : 'Quiet') : 'No data', sub: act || 'no camera nearby' };
+      : { cls: 'mid', word: act ? (top && top[1] >= 2 ? 'Active' : 'Quiet') : 'No data', sub: act || 'no camera nearby' };
     const skyT = here
       ? (hereCloudy.length && !hereClear.length ? { cls: 'bad', word: '✕ Cloudy', sub: `camera: cloudy ${span(hereCloudy)}` }
         : hereClear.length && !hereCloudy.length ? { cls: 'ok', word: '✓ Clear', sub: `camera: clear ${span(hereClear)}` }
@@ -1937,7 +1954,6 @@
     // A camera here sees the whole sky down to the horizon: if it saw no aurora, nothing was visible here.
     // Without a camera nobody can confirm it: clear hours + enough measured activity for this latitude = "Maybe".
     const need = obs && obs.kp_needed != null ? obs.kp_needed : null;
-    const top = hpMax == null && kpMax == null ? null : (hpMax ?? -1) >= (kpMax ?? -1) ? ['Hp30', hpMax] : ['Kp', kpMax];
     const strong = top != null && need != null && top[1] >= need;
     const vs = top && need != null ? `${top[0]} max ${top[1].toFixed(1)}, ${need.toFixed(1)} needed here` : '';
     const big = hereA.length ? ['g', 'Seen', `aurora ${span(hereA)}`]
@@ -1971,8 +1987,8 @@
     // one hour strip for the place itself: its camera when there is one, else MET's cloud analysis
     const HOURS = ['19', '20', '21', '22', '23', '00', '01', '02', '03', '04', '05'];
     const cls = { aurora: 'a', 'possible aurora': 'a', clear: 'cl', cloudy: 'c', 'bright (moon)': 'm', mixed: 'c' };
-    const metAt = {}, sunAt = {};
-    for (const r of (obs && obs.hours) || []) { metAt[r[0].slice(0, 2)] = r[2]; sunAt[r[0].slice(0, 2)] = r[1]; }
+    const metAt = {}, sunAt = {}, needAt = {};
+    for (const r of (obs && obs.hours) || []) { metAt[r[0].slice(0, 2)] = r[2]; sunAt[r[0].slice(0, 2)] = r[1]; needAt[r[0].slice(0, 2)] = r[4]; }
     const hourInfo = HOURS.map((hh) => {
       const t = new Date(`${+hh >= 12 ? date : new Date(new Date(date + 'T12:00:00Z').getTime() + 864e5).toISOString().slice(0, 10)}T${hh}:00:00Z`).getTime() - OFFSET_H * 3600e3;
       let mag = null;
@@ -1981,7 +1997,7 @@
         const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
         st.series.dev.forEach((v, i) => { const x = s0 + i * step; if (v != null && x >= t && x < t + 3600e3 && (mag == null || v < mag)) mag = v; });
       }
-      return { hh, cloud: metAt[hh] ?? null, kp: kpObs(t, t + 3600e3), hp: hp30In(t), mag };
+      return { hh, cloud: metAt[hh] ?? null, kp: kpObs(t, t + 3600e3), hp: hp30In(t), need: needAt[hh] ?? need ?? kpNeedAt(lat, lon), mag };
     });
     const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%)` : `${esc(c.name)} camera: no picture`);
     const others = cams.filter((c) => c !== here);
@@ -1990,7 +2006,7 @@
       const near = others.filter((c) => c.hrs[h.hh]).map((c) => `${esc(c.name)} ${camWord(c.hrs[h.hh])}`).join(', ');
       const parts = [here ? camTxt(here, here.hrs[h.hh]) : '', h.cloud != null ? `MET analysis ${atSea ? "at the ship's position" : 'for ' + esc(place)}: cloud ${Math.round(h.cloud)}%` : '',
         near ? `cameras nearby: ${near}` : '',
-        h.kp != null ? kpChip(h.kp, 'measured') : '', h.hp != null ? hpChip(h.hp) : '', h.mag != null ? `magnetometer ${h.mag} nT` : ''].filter(Boolean);
+        measChip(h.hp, h.kp, h.need), h.mag != null ? `magnetometer ${h.mag} nT` : ''].filter(Boolean);
       return `<b>${h.hh}:00</b> · ${parts.join(' · ')}`;
     };
     // icon: MET's analysis for this place; without it, what the camera here saw
@@ -2011,12 +2027,13 @@
       <div class="pstrip" data-row="0">${HOURS.map((h, i) => `<div data-i="${i}" role="button" tabindex="0">${icon(i)}<i class="${bar(h)}"></i>${h}</div>`).join('')}</div>
       <div class="bwhy" id="b-lastwhy"><span class="btap">👆 Tap an hour to see what happened</span></div>
       <div class="blegend">${here ? '<span><b class="a"></b>aurora</span>' : ''}<span><b class="cl"></b>clear${here ? ', no aurora' : ' (≤40%)'}</span><span><b class="c"></b>cloudy</span><span><b class="m"></b>${here ? 'bright (moon / twilight)' : 'twilight (too bright)'}</span></div>` : '';
-    return { date, place, skyHead: atSea ? 'Sky at the ship' : `Sky in ${place}`, big, aur, sky: skyT, line, fc, alerts, strips, why: (i) => why(i), short: `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]} · ${line}` };
+    return { date, place, practice: t.practice, skyHead: atSea ? 'Sky at the ship' : `Sky in ${place}`, big, aur, sky: skyT, line, fc, alerts, strips, why: (i) => why(i), short: `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]} · ${line}` };
   }
 
   function prevNightCard(P) {
     return `<div class="b-card" id="b-last"><div class="b-k">Last night · ${dayLabel(P.date)} <span class="btag">MORNING</span></div>
       <div class="bplace">📍 ${esc(P.place)}</div>
+      <div class="bplace-s">${P.practice ? 'practice spot until the cruise starts' : 'where the ship was that night, from the published itinerary'}</div>
       <div class="b-big"><span class="b-sym ${P.big[0]}">${{ g: '✓', y: '?', n: '✕', u: '…' }[P.big[0]]}</span><span class="b-verdict">${esc(P.big[1])} <small>${esc(P.big[2])}</small></span></div>
       <div class="bfx">${[['Aurora', P.aur], [P.skyHead, P.sky]].map(([k, f]) =>
         `<div class="bf ${f.cls}"><div class="h">${esc(k)}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
