@@ -24,7 +24,7 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="assets/style.css?v=61">
+<link rel="stylesheet" href="assets/style.css?v=62">
 </head>
 <body>
 <div class="aurora-glow"></div>
@@ -47,12 +47,12 @@
       <a href="#trend">Trend</a>
       <a href="#space">Space weather</a>
       <a href="#live">Live</a>
+      <a href="#mag">Mag</a>
       <a href="#weather">Weather</a>
       <a href="#check">Model check</a>
-      <a href="#guide">Guide</a>
-      <a href="#more">Background</a>
       <a href="#map-sec">Map</a>
       <a href="#itinerary">Itinerary</a>
+      <a href="#guide">Guide</a>
     </nav>
   </div>
 </header>
@@ -104,6 +104,54 @@
     <div class="daytabs" id="wx-tabs"></div>
     <div class="panel" id="wx-port"><div class="empty">Loading…</div></div>
     <p class="hint">Forecasts: MET Norway (the institute behind yr.no), its 2.5 km local model for Norway: hourly for about 2.5 days, then 6-hourly up to about 9 days. Hikes and viewpoints use the forecast for their own altitude. Typical weather: ERA5 reanalysis 2011–2025, daytime 08–20.</p>
+  </section>
+
+  <section id="check">
+    <details class="panel" id="check-panel">
+      <summary style="cursor:pointer;color:var(--text-2)"><b>Model check</b> · tonight in Tromsø and Alta, same model as the cruise nights</summary>
+      <div id="check-body" style="margin-top:12px"></div>
+    </details>
+  </section>
+
+  <section id="map-sec">
+    <h2>Route &amp; nights</h2>
+    <div id="map"></div>
+    <p class="hint">Dots = where the ship is around midnight, colored by that night's rating. Map © OpenStreetMap contributors.</p>
+  </section>
+
+  <section id="itinerary">
+    <h2>Itinerary</h2>
+    <div class="panel">
+      <div class="itin-now" id="itin-now"></div>
+      <div class="tbl-wrap"><table class="itin">
+        <tr><th>Oct</th><th>Port</th><th>Arrive</th><th>Depart</th></tr>
+        <tr data-d="2026-10-10"><td class="d">Sat 10</td><td>Southampton, England</td><td>–</td><td>16:00</td></tr>
+        <tr data-d="2026-10-11" class="sea"><td class="d">Sun 11</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-12" class="sea"><td class="d">Mon 12</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-13"><td class="d">Tue 13</td><td>Trondheim, Norway</td><td>12:00</td><td>20:00</td></tr>
+        <tr data-d="2026-10-14" class="sea"><td class="d">Wed 14</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-15"><td class="d">Thu 15</td><td>Tromsø, Norway</td><td>09:00</td><td>Fri 01:00</td></tr>
+        <tr data-d="2026-10-16"><td class="d">Fri 16</td><td>Alta, Norway <span class="why">(water shuttle, limited wheelchair access)</span></td><td>12:00</td><td>–</td></tr>
+        <tr data-d="2026-10-17"><td class="d">Sat 17</td><td>Alta, Norway</td><td>–</td><td>23:59</td></tr>
+        <tr data-d="2026-10-18" class="sea"><td class="d">Sun 18</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-19" class="sea"><td class="d">Mon 19</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-20"><td class="d">Tue 20</td><td>Molde, Norway</td><td>08:00</td><td>18:00</td></tr>
+        <tr data-d="2026-10-21"><td class="d">Wed 21</td><td>Ålesund, Norway</td><td>08:00</td><td>17:00</td></tr>
+        <tr data-d="2026-10-22" class="sea"><td class="d">Thu 22</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-23" class="sea"><td class="d">Fri 23</td><td>At sea</td><td></td><td></td></tr>
+        <tr data-d="2026-10-24"><td class="d">Sat 24</td><td>Southampton, England</td><td>07:00</td><td>–</td></tr>
+      </table></div>
+      <p class="hint">Times are local, as published by Princess. Norway uses the same time as Budapest (CEST); England is one hour behind. The ship changes its clocks on the way to Norway and back; the exact nights are announced on board (Princess Patter). Daylight saving time ends on 25 Oct, after the cruise.</p>
+    </div>
+  </section>
+
+  <section id="more">
+    <h2>Background</h2>
+    <div class="panel text-block" id="swpc-text"></div>
+    <details class="panel" style="margin-top:14px">
+      <summary style="cursor:pointer;color:var(--text-2)"><b>Aurora overhead right now along the route</b> <span class="why">· NOAA model, this very moment</span></summary>
+      <div id="route-ov-body" style="margin-top:10px"><div class="empty">Loading…</div></div>
+    </details>
   </section>
 
   <section id="guide">
@@ -169,54 +217,6 @@
     </div>
   </section>
 
-  <section id="check">
-    <details class="panel" id="check-panel">
-      <summary style="cursor:pointer;color:var(--text-2)"><b>Model check</b> · tonight in Tromsø and Alta, same model as the cruise nights</summary>
-      <div id="check-body" style="margin-top:12px"></div>
-    </details>
-  </section>
-
-  <section id="more">
-    <h2>Background</h2>
-    <div class="panel text-block" id="swpc-text"></div>
-    <details class="panel" style="margin-top:14px">
-      <summary style="cursor:pointer;color:var(--text-2)"><b>Aurora overhead right now along the route</b> <span class="why">· NOAA model, this very moment</span></summary>
-      <div id="route-ov-body" style="margin-top:10px"><div class="empty">Loading…</div></div>
-    </details>
-  </section>
-
-  <section id="map-sec">
-    <h2>Route &amp; nights</h2>
-    <div id="map"></div>
-    <p class="hint">Dots = where the ship is around midnight, colored by that night's rating. Map © OpenStreetMap contributors.</p>
-  </section>
-
-  <section id="itinerary">
-    <h2>Itinerary</h2>
-    <div class="panel">
-      <div class="itin-now" id="itin-now"></div>
-      <div class="tbl-wrap"><table class="itin">
-        <tr><th>Oct</th><th>Port</th><th>Arrive</th><th>Depart</th></tr>
-        <tr data-d="2026-10-10"><td class="d">Sat 10</td><td>Southampton, England</td><td>–</td><td>16:00</td></tr>
-        <tr data-d="2026-10-11" class="sea"><td class="d">Sun 11</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-12" class="sea"><td class="d">Mon 12</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-13"><td class="d">Tue 13</td><td>Trondheim, Norway</td><td>12:00</td><td>20:00</td></tr>
-        <tr data-d="2026-10-14" class="sea"><td class="d">Wed 14</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-15"><td class="d">Thu 15</td><td>Tromsø, Norway</td><td>09:00</td><td>Fri 01:00</td></tr>
-        <tr data-d="2026-10-16"><td class="d">Fri 16</td><td>Alta, Norway <span class="why">(water shuttle, limited wheelchair access)</span></td><td>12:00</td><td>–</td></tr>
-        <tr data-d="2026-10-17"><td class="d">Sat 17</td><td>Alta, Norway</td><td>–</td><td>23:59</td></tr>
-        <tr data-d="2026-10-18" class="sea"><td class="d">Sun 18</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-19" class="sea"><td class="d">Mon 19</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-20"><td class="d">Tue 20</td><td>Molde, Norway</td><td>08:00</td><td>18:00</td></tr>
-        <tr data-d="2026-10-21"><td class="d">Wed 21</td><td>Ålesund, Norway</td><td>08:00</td><td>17:00</td></tr>
-        <tr data-d="2026-10-22" class="sea"><td class="d">Thu 22</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-23" class="sea"><td class="d">Fri 23</td><td>At sea</td><td></td><td></td></tr>
-        <tr data-d="2026-10-24"><td class="d">Sat 24</td><td>Southampton, England</td><td>07:00</td><td>–</td></tr>
-      </table></div>
-      <p class="hint">Times are local, as published by Princess. Norway uses the same time as Budapest (CEST); England is one hour behind. The ship changes its clocks on the way to Norway and back; the exact nights are announced on board (Princess Patter). Daylight saving time ends on 25 Oct, after the cruise.</p>
-    </div>
-  </section>
-
   <footer>
     <div>Data: NOAA SWPC (Kp, 27-day outlook, OVATION, solar wind), NASA CCMC DONKI (CME model), Open-Meteo (ECMWF &amp; GFS ensemble cloud forecasts, ERA5 climate 2011–2025), FMI IMAGE magnetometers (CC BY 4.0), Tromsø Geophysical Observatory, UiT / IRF all-sky cameras, Tromsø AI (UEC). Nothing here is an official forecast; it is a transparent combination of official data.</div>
     <div id="sources" style="margin-top:6px"></div>
@@ -224,6 +224,6 @@
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="assets/app.js?v=61"></script>
+<script src="assets/app.js?v=62"></script>
 </body>
 </html>

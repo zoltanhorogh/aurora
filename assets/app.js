@@ -798,7 +798,8 @@
     const mlat = Math.asin(Math.sin(lat * R) * Math.sin(80.8 * R) + Math.cos(lat * R) * Math.cos(80.8 * R) * Math.cos((lon + 72.6) * R)) / R;
     return Math.max(0, Math.min(9, (67.5 - mlat) / 1.8 + 0.5));
   }
-  const liveNeed = () => { const s = shipNow(); return kpNeedAt(s.lat, s.lon); };
+  // Live "here": the ship once sailing, Tromsø (the practice spot) before the cruise
+  const liveNeed = () => { const s = shipNow(); return s.sailing ? kpNeedAt(s.lat, s.lon) : kpNeedAt(69.65, 18.96); };
 
   // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
   const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
@@ -810,10 +811,41 @@
     const max24 = Math.max(...HP30.map((p) => p[1]));
     const ageMin = Math.round((Date.now() - new Date(ts)) / 60000) - 30; // value covers ts..ts+30min
     setTile('lt-hp', v.toFixed(1),
-      `needed here ≈${need.toFixed(0)} ${v >= need ? '✓' : '✕'} · ${hm(new Date(new Date(ts).getTime() + 1800e3))} ship time${ageMin > 90 ? ' (old)' : ''} · 24 h max ${max24.toFixed(1)}`);
+      `needed here ≈${need.toFixed(1)} ${v >= need ? '✓' : '✕'} · ${hm(new Date(new Date(ts).getTime() + 1800e3))} ship time${ageMin > 90 ? ' (old)' : ''} · 24 h max ${max24.toFixed(1)}`);
   }
 
   // Nearest FMI magnetometer to the ship (Tromsø area before the cruise). None near the southern ports.
+  // A station's story this evening (from 16:00 ship time; after midnight: since 16:00 the day before):
+  // value now vs the quiet level, its 10-minute trend, the highest rise and the deepest dip with their times.
+  function magStory(st) {
+    if (!st || !st.series) return null;
+    const sd = shipDate(Date.now());
+    if (sd.getUTCHours() < 12) sd.setUTCDate(sd.getUTCDate() - 1);
+    const from = new Date(sd.toISOString().slice(0, 10) + 'T16:00:00Z').getTime() - OFFSET_H * 3600e3;
+    const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
+    const pts = st.series.dev.map((v, i) => [s0 + i * step, v]).filter(([, v]) => v != null);
+    if (!pts.length) return null;
+    const [tNow, now] = pts[pts.length - 1];
+    const ago = pts.filter(([t]) => t <= tNow - 10 * 60e3).pop();
+    const eve = pts.filter(([t]) => t >= from);
+    const span = eve.length ? eve : pts.slice(-180);
+    const peak = span.reduce((b, p) => (p[1] > b[1] ? p : b)), low = span.reduce((b, p) => (p[1] < b[1] ? p : b));
+    return { pts, tNow, now, d10: ago ? now - ago[1] : 0, peak, low, evening: eve.length > 0 };
+  }
+  const nT = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)}`;
+
+  // Last 3 hours as a small line around the quiet level (dashed 0 line)
+  function magSpark(pts) {
+    const p = pts.filter(([t]) => t >= pts[pts.length - 1][0] - 3 * 3600e3);
+    if (p.length < 2) return '';
+    const t0 = p[0][0], t1 = p[p.length - 1][0], m = Math.max(60, ...p.map(([, v]) => Math.abs(v)));
+    const x = (t) => ((t - t0) / Math.max(1, t1 - t0)) * 200, y = (v) => 22 - (v / m) * 20;
+    const line = p.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    return `<svg class="magspark" viewBox="0 0 200 44" preserveAspectRatio="none" aria-hidden="true">
+      <line x1="0" x2="200" y1="22" y2="22" stroke="#555a63" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/>
+      <polyline points="${line}" fill="none" stroke="#9fd3ff" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+  }
+
   function updateMagTile() {
     const st = MAG && MAG.stations;
     if (!st || !Object.keys(st).length) return setTile('lt-mag', '–', 'no reading yet (logged after dark only)');
@@ -823,18 +855,26 @@
     const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
     const best = Object.values(st).reduce((b, x) => (!b || km(x) < km(b) ? x : b), null);
     if (km(best) > 300) return setTile('lt-mag', '–', 'no station near the ship here: use Kp, Hp30 and the map');
-    const level = best.swing_60 >= 200 ? '<span class="ok">strong: go outside if clear</span>' : best.swing_60 >= 50 ? 'active: aurora likely nearby' : 'quiet';
-    const drop = best.change_10 <= -50 ? ` · ⬇ dropped ${-best.change_10} nT in 10 min` : '';
     const old = Date.now() - new Date(best.t) > 40 * 60e3;
-    setTile('lt-mag', `${best.swing_60}<small> nT</small>`,
-      `${level}${drop} · swing in the last hour at ${esc(best.name)} (${Math.round(km(best) / 10) * 10} km) · ${hm(best.t)} ship time${old ? ' (old: logged after dark only)' : ''}`);
+    const where = `${esc(best.name)} (${Math.round(km(best) / 10) * 10} km) · ${hm(best.t)} ship time${old ? ' (old: logged after dark only)' : ''}`;
+    const m = magStory(best);
+    if (!m) return setTile('lt-mag', `${best.swing_60}<small> nT</small>`, `swing in the last hour · ${where}`);
+    // + = field pushed up (energy building), − = dip (substorm, aurora moving); arrow = last 10 minutes
+    const arrow = m.d10 >= 5 ? '↑' : m.d10 <= -5 ? '↓' : '→';
+    const word = m.now <= -50 || best.change_10 <= -50 ? 'substorm' : m.d10 >= 5 ? 'rising' : m.d10 <= -5 ? 'falling' : Math.abs(m.now) < 20 ? 'calm' : 'steady';
+    const strong = m.now <= -200 || best.swing_60 >= 200 ? ' · <span class="ok">strong: go outside if clear</span>' : '';
+    const when = m.evening ? 'this evening' : 'last 3 h';
+    setTile('lt-mag', `${nT(m.now)}<small> nT</small> <span class="magarrow">${arrow}</span> <span class="magword ${word}">${word}</span>`,
+      `${magSpark(m.pts)}<div>${when}: ${[[m.low, 'lowest'], [m.peak, 'peak']].sort((x, y) => x[0][0] - y[0][0])
+        .map(([q, k]) => `${k} ${nT(q[1])} at ${hm(new Date(q[0]))}`).join(' → ')} → now ${nT(m.now)}${strong}</div>
+      <div class="why">vs the quiet level · ${where}</div>`);
   }
 
   function refreshNoaaTiles() {
     const need = liveNeed();
     getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
       const k = a[a.length - 1].estimated_kp;
-      setTile('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(0)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
+      setTile('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(1)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
       LIVE.kp = k;
       basicRefresh();
     }).catch(() => setTile('lt-kp', '–', 'offline'));
@@ -905,7 +945,8 @@
     const s = shipNow();
     const t = (k, v, sub, id) => `<div class="tile" ${id ? `id="${id}"` : ''}><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
     $('#live-tiles').innerHTML =
-      `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.sailing ? `${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)` : 'Not sailing yet: shows the planned start'}</div></div>` +
+      (s.sailing ? `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)</div></div>`
+        : '<div class="tile ship"><div class="k">Practice spot</div><div class="v">Tromsø</div><div class="s">until the cruise starts, all live numbers are for Tromsø</div></div>') +
       t('Kp now', '…', '', 'lt-kp') + t('Activity now (Hp30)', '…', '', 'lt-hp') + t('Magnetometer', '…', '', 'lt-mag') +
       t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
     refreshNoaaTiles();
@@ -1647,7 +1688,7 @@
         if (e.isIntersecting) links.forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id));
       });
     }, { rootMargin: '-45% 0px -50% 0px' });
-    document.querySelectorAll('main section').forEach((s) => obs.observe(s));
+    document.querySelectorAll('main section, #mag').forEach((s) => obs.observe(s));
   }
 
   // ------------------------------------------------------------ basic view
@@ -1828,7 +1869,13 @@
       const low = dev.length ? Math.min(...dev.slice(-30)) : 0;
       if (low <= -200 || st.swing_60 >= 200) return ['strong', 'Strong', `magnetometer ${esc(st.name)} ${low} nT: big display overhead`];
       if (low <= -50 || st.change_10 <= -50) return ['active', 'Active', `magnetometer ${esc(st.name)} ${low} nT: aurora moving now`];
-      if (last >= 40 && shipDate(Date.now()).getUTCHours() >= 16) return ['charging', 'Charging ↑', `magnetometer rising (+${last} nT): a substorm is likely later tonight`];
+      // This evening: the highest rise above the quiet level, and whether a substorm dip came after it
+      const m = magStory(st);
+      if (m && m.evening && m.peak[1] >= 40) {
+        const dipAfter = m.pts.some(([t, v]) => t >= m.peak[0] && v <= -50);
+        if (!dipAfter) return ['charging', 'Charging ↑', `magnetometer rose to ${nT(m.peak[1])} nT at ${hm(new Date(m.peak[0]))} (now ${nT(last)}): a substorm is likely later tonight`];
+        return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm again after tonight's substorm; another one can follow`];
+      }
       return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm`];
     }
     const hp = HP30 && HP30.length ? HP30[HP30.length - 1][1] : null;
@@ -2072,7 +2119,15 @@
     // Last night: a full card above tonight in the morning (until noon), one line further down later in the day
     const P = basicPrevNight(t);
     const morning = shipDate(Date.now()).getUTCHours() < 12 && !!t && t.n.date === shipDate(Date.now()).toISOString().slice(0, 10);
-    el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}
+    const hourly = t && metCovers(t.n) ? `<details class="b-card bhourly" id="b-hourly"><summary>📊 Detailed hourly · ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}, tonight</summary>
+        <div class="legend">
+          <span><i style="background:#3987e5"></i>Cloud cover, MET Norway (left axis) · below the white 40% line = clear enough</span>
+          <span><i class="line" style="background:#e8743b"></i>Kp forecast (right axis)</span>
+          <span><i class="line" style="background:repeating-linear-gradient(90deg,#e8743b 0 6px,transparent 6px 10px)"></i>Kp needed here · solid above dashed = strong enough</span>
+        </div>
+        <div class="chart" id="b-chart"></div>
+        ${hoursTable(t.n)}</details>` : '';
+    el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
       <div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>
       <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
@@ -2118,6 +2173,8 @@
       scrollToY(yOf($('#night-detail')));
     })));
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
+    const bh = $('#b-hourly');
+    if (bh) bh.addEventListener('toggle', () => { if (bh.open) drawHourly(t.n, $('#b-chart')); });
     if (P && morning) {
       el.querySelectorAll('#b-last .pstrip > div').forEach((c) => c.addEventListener('click', () => {
         el.querySelectorAll('#b-last .pstrip > div').forEach((x) => x.classList.toggle('sel', x === c));

@@ -153,6 +153,14 @@ INJECT = r"""<script>
         await sleep(100);
         check('basic last-night hour explains itself', /\d\d:00/.test(document.querySelector('#b-lastwhy').textContent));
       }
+      const bh = b.querySelector('#b-hourly');
+      if (bh) {
+        check('basic detailed hourly is folded', !bh.open);
+        bh.querySelector('summary').click();
+        await sleep(300);
+        check('basic detailed hourly opens with chart and hours', !!bh.querySelector('#b-chart svg') && !!bh.querySelector('.hr'));
+        bh.querySelector('summary').click();
+      }
       const cell = b.querySelector('.bstrip > div');
       if (cell) {
         cell.click();
