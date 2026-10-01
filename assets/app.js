@@ -58,11 +58,11 @@
     return r.json();
   }
 
+  // The cruise night shown as "tonight" (null before and after the cruise nights): the same night as in the
+  // basic view, i.e. the night in progress until its darkness ends, then the coming night.
   function tonightDate() {
-    const s = shipDate(Date.now());
-    if (s.getUTCHours() < 12) s.setUTCDate(s.getUTCDate() - 1);
-    const iso = s.toISOString().slice(0, 10);
-    return D.nights.some((n) => n.date === iso) ? iso : null;
+    const t = basicTonight();
+    return t && t.n && !t.practice ? t.date : null;
   }
 
   function shipNow() {
@@ -73,8 +73,16 @@
       if (dt < bestDt) { bestDt = dt; best = r; }
     }
     const sailing = now >= new Date(D.trip.start) && now <= new Date(D.trip.end);
-    return { lat: best[1], lon: best[2], state: best[3], place: best[4], sailing };
+    // practice (Tromsø) until the first cruise night becomes "tonight", then the ship (Southampton on the
+    // morning of departure) until the arrival, then the cruise is over
+    const phase = now > new Date(D.trip.end) ? 'over' : now >= new Date(D.trip.cruise_day_from || D.trip.start) ? 'cruise' : 'practice';
+    return { lat: best[1], lon: best[2], state: best[3], place: best[4], sailing, phase, aboard: phase === 'cruise' };
   }
+  // The position the live numbers refer to, and how to name it.
+  const herePos = () => {
+    const s = shipNow();
+    return s.aboard ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, s.phase === 'over' ? 'Tromsø (the cruise is over)' : 'Tromsø (not sailing yet)'];
+  };
 
   // ------------------------------------------------------------ freshness
   function renderFresh() {
@@ -187,39 +195,31 @@
 
   // ------------------------------------------------------------ night cards
   // ------------------------------------------------------------ past nights (during the cruise)
-  // A night is over at 06:00 ship time the next morning. Then its card shows what happened instead of an old forecast.
-  const isPast = (n) => Date.now() > new Date(n.date + 'T04:00:00Z').getTime() + 864e5;
+  // A night is over when its darkness ends at its place (the ship's position): the same rule everywhere on the
+  // page and in the robot's files. Then its card shows what happened instead of an old forecast.
+  const nightEnd = (n) => {
+    const e = eventAt(n, 'dark_end');
+    if (e) return new Date(e.t).getTime();
+    const dark = n.hourly.filter((h) => h.dark);
+    return dark.length ? new Date(dark[dark.length - 1].t).getTime() + 3600e3 : new Date(n.date + 'T04:00:00Z').getTime() + 864e5;
+  };
+  const isPast = (n) => Date.now() >= nightEnd(n);
   const CAMS = [['tromso', 'Tromsø camera', 69.65, 18.96], ['skibotn', 'Skibotn camera', 69.35, 20.36], ['kiruna', 'Kiruna camera', 67.84, 20.41]];
-  // The all-sky camera near the ship that night (within 250 km), with its hourly AI log.
-  function camNear(n) {
-    const R = Math.PI / 180;
-    const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(n.lat * R) * Math.sin(la * R) + Math.cos(n.lat * R) * Math.cos(la * R) * Math.cos((n.lon - lo) * R)));
-    const c = CAMS.map(([id, name, la, lo]) => ({ id, name, km: km(la, lo) })).sort((a, b) => a.km - b.km)[0];
-    const hrs = c.km <= 250 && SKY && SKY.nights && SKY.nights[n.date] && SKY.nights[n.date][c.id];
-    const pick = (w) => Object.keys(hrs).filter((h) => camWord(hrs[h]) === w).sort(hourOrder);
-    return hrs ? { name: c.name, hrs, aurora: pick('aurora'), possible: pick('possible aurora') } : null;
-  }
   const span = (arr) => (arr.length ? `${arr[0]}–${arr[arr.length - 1]}` : '');
   // One word for an hour of the camera AI log ("bright" = moonlit sky the AI calls dusk/dawn).
   const camWord = (v) => (v.aurora >= 50 ? 'aurora' : (v.bright || 0) >= 30 ? 'possible aurora' : v.dusk >= 50 ? 'bright (moon)'
     : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed');
   const hourOrder = (a, b) => ((+a + 12) % 24) - ((+b + 12) % 24);
+  // A finished cruise night in the advanced view: the same verdict as the basic view's "Last night" (nightResult):
+  // ✓ Seen only from the place's own camera, ? Maybe, ✕ Not seen, … not known yet.
+  const SYM = { g: '✓', y: '?', n: '✕', u: '…' };
   function pastSummary(n) {
+    const R = nightResult(n.date);
     const rec = LOG && LOG.nights && LOG.nights[n.date];
-    const o = rec && rec.observed, f = rec && rec.forecast, cam = camNear(n);
-    let head, cls;
-    if (cam && cam.aurora.length) [head, cls] = [`Aurora seen ${span(cam.aurora.map((h) => h + ':00'))}`, 'ok'];
-    else if (cam && cam.possible.length) [head, cls] = [`Possible aurora ${span(cam.possible.map((h) => h + ':00'))} (bright sky)`, 'ok'];
-    else if (o && !o.clear_dark.length) [head, cls] = ['Cloudy all night', 'why'];
-    else if (o && o.hp30_max_dark != null && o.hp30_max_dark >= o.kp_needed) [head, cls] = [`Clear and active: aurora likely (${span(o.clear_dark)})`, 'ok'];
-    else if (o) [head, cls] = [`Clear ${o.clear_dark.length} h, but too quiet here`, 'why'];
-    else [head, cls] = ['Result soon', 'why'];
-    const lines = [
-      f ? `Forecast that evening: ${pct(f.score)} ${f.rating}` : 'No evening forecast recorded',
-      o ? `Hp30 max ${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} (needed ≈${o.kp_needed})` : 'MET analysis arrives in the morning',
-      cam ? `${cam.name}: ${cam.aurora.length ? 'aurora' : cam.possible.length ? 'possible aurora' : 'no aurora'} (${Object.keys(cam.hrs).length} h checked)` : '',
-    ].filter(Boolean);
-    return { head, cls, lines, rec, o, f, cam };
+    const o = rec && rec.observed, f = rec && rec.forecast;
+    const lines = [R.line, f ? `Forecast that evening: ${pct(f.score)} ${f.rating}` : 'No evening forecast recorded', R.measured].filter(Boolean);
+    return { head: `${SYM[R.big[0]]} ${R.head}`, cls: { g: 'ok', y: 'y', n: 'n', u: 'why' }[R.big[0]], lines, rec, o, f,
+      cam: R.here ? { name: `${R.here.name} camera`, hrs: R.here.hrs } : null };
   }
 
   // ------------------------------------------------------------ last night up north
@@ -507,7 +507,7 @@
         ${rows.map((r) => `<tr class="${r[1] > -12 ? 'why' : ''}"><td>${r[0]}${r[1] > -12 ? ' <span class="why">twilight</span>' : ''}</td><td>${fc.get(r[0]) || '–'}</td>
           <td>${r[2] <= 40 ? `<span class="ok">${r[2]}%</span>` : r[2] + '%'}</td><td>${r[3] != null ? r[3].toFixed(1) : '–'}</td>${camCell(r[0])}</tr>`).join('')}
       </table></div>
-      <p class="hint">Cloud: MET Norway's analysis at the ship's position that hour (green = clear, ≤40%). Hp30 = planetary activity; ≈${s.o.kp_needed} was needed here. Camera AI only when an all-sky camera was within 250 km.</p>`
+      <p class="hint">Cloud: MET Norway's analysis at the ship's position that hour (green = clear, ≤40%). Hp30 = planetary activity; ≈${s.o.kp_needed} was needed here. Camera AI only when the place has its own all-sky camera (within 60 km).</p>`
         : '<div class="empty">The night is over; the hour-by-hour result appears after the next forecast run in the morning.</div>'}`;
   }
 
@@ -816,8 +816,8 @@
     const mlat = Math.asin(Math.sin(lat * R) * Math.sin(80.8 * R) + Math.cos(lat * R) * Math.cos(80.8 * R) * Math.cos((lon + 72.6) * R)) / R;
     return Math.max(0, Math.min(9, (67.5 - mlat) / 1.8 + 0.5));
   }
-  // Live "here": the ship once sailing, Tromsø (the practice spot) before the cruise
-  const liveNeed = () => { const s = shipNow(); return s.sailing ? kpNeedAt(s.lat, s.lon) : kpNeedAt(69.65, 18.96); };
+  // Live "here": Tromsø (the practice spot) before the cruise, the ship from the day of departure (herePos)
+  const liveNeed = () => { const [lat, lon] = herePos(); return kpNeedAt(lat, lon); };
 
   // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
   const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
@@ -901,8 +901,7 @@
   function updateMagTile() {
     const st = MAG && MAG.stations;
     if (!st || !Object.keys(st).length) return setTile('lt-mag', '–', 'no reading yet (logged after dark only)');
-    const s = shipNow();
-    const [lat, lon] = s.sailing ? [s.lat, s.lon] : [69.65, 18.96];
+    const [lat, lon] = herePos();
     const R = Math.PI / 180;
     const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
     const best = Object.values(st).reduce((b, x) => (!b || km(x) < km(b) ? x : b), null);
@@ -948,9 +947,8 @@
   }
 
   function refreshOvation() {
-    const s = shipNow();
+    const [lat, lon, label] = herePos();
     getOvation().then((o) => {
-      const [lat, lon, label] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'Tromsø (not sailing yet)'];
       const { local, north } = ovationAt(o, lat, lon);
       setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
       LIVE.ov = local;
@@ -991,7 +989,8 @@
     const s = shipNow();
     const t = (k, v, sub, id) => `<div class="tile" ${id ? `id="${id}"` : ''}><div class="k">${k}</div><div class="v">${v}</div><div class="s">${sub}</div></div>`;
     $('#live-tiles').innerHTML =
-      (s.sailing ? `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)</div></div>`
+      (s.aboard ? `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)</div></div>`
+        : s.phase === 'over' ? '<div class="tile ship"><div class="k">Reference</div><div class="v">Tromsø</div><div class="s">the cruise is over; the live numbers are for Tromsø</div></div>'
         : '<div class="tile ship"><div class="k">Practice spot</div><div class="v">Tromsø</div><div class="s">until the cruise starts, all live numbers are for Tromsø</div></div>') +
       t('Activity now (Hp30)', '…', '', 'lt-hp').replace('class="tile"', 'class="tile wide"') + t('Magnetometer', '…', '', 'lt-mag') +
       t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
@@ -1042,7 +1041,7 @@
     const el = $('#sat');
     if (!el) return;
     const s = shipNow();
-    const view = satView || (!s.sailing || s.lat >= 63 ? 'north' : 'scand');
+    const view = satView || (!s.aboard || s.lat >= 63 ? 'north' : 'scand');
     const c = SAT_CROPS[view];
     el.innerHTML = `<h3>Clouds from space <span class="why">· last hour</span></h3>
       <p class="hint" style="margin-top:0">Satellite picture (Meteosat, infrared, works at night): <b>white = cloud</b> (the brighter, the higher and colder), <b>blue = clear sea</b>, <b>green = clear land</b>. The frames of the last hour play in a loop, so you can see which way the clouds drift and whether a clear gap is coming.</p>
@@ -1087,8 +1086,8 @@
   async function loadCloudWind() {
     const box = document.getElementById('sat-wind');
     if (!box) return;
-    const s = shipNow();
-    const [lat, lon, where] = s.sailing ? [s.lat, s.lon, 'at the ship'] : [69.65, 18.96, 'at Tromsø (not sailing yet)'];
+    const [lat, lon, label] = herePos();
+    const where = label === 'at the ship' ? label : `at ${label}`;
     try {
       const js = await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(2)}&longitude=${lon.toFixed(2)}&hourly=wind_speed_700hPa,wind_direction_700hPa&forecast_days=2&timezone=GMT`);
       const t0 = Math.floor(Date.now() / 3600e3) * 3600e3;
@@ -1336,7 +1335,7 @@
       ovRenderer = L.canvas({ padding: 0.3, pane: 'cells' });
       L.polyline(D.route_hourly.map((r) => [r[1], r[2]]), { color: '#9085e9', weight: 1.5, opacity: 0.7, dashArray: '4 4' }).addTo(ovMap);
       const s = shipNow();
-      if (s.sailing) L.circleMarker([s.lat, s.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#3ee08f', fillOpacity: 1 }).addTo(ovMap).bindTooltip('Ship now', { permanent: true, direction: 'right' });
+      if (s.aboard) L.circleMarker([s.lat, s.lon], { radius: 7, color: '#fff', weight: 2, fillColor: '#3ee08f', fillOpacity: 1 }).addTo(ovMap).bindTooltip('Ship now', { permanent: true, direction: 'right' });
       else for (const [name, lat, lon, dir] of [['Tromsø', 69.65, 18.96, 'left'], ['Alta', 69.98, 23.25, 'right']]) L.circleMarker([lat, lon], { radius: 4, color: '#fff', weight: 1, fillColor: '#fff', fillOpacity: 1 }).addTo(ovMap).bindTooltip(name, { permanent: true, direction: dir });
       ovMap.fitBounds([[61, 4], [75, 30]]);
     }
@@ -1415,7 +1414,7 @@
         .addTo(map).bindPopup(`<b>${dayLabel(n.date)}</b><br>${esc(shortPlace(n.place))}<br>${pct(n.score)} · ${n.rating}`);
     }
     const s = shipNow();
-    if (s.sailing) {
+    if (s.aboard) {
       L.circleMarker([s.lat, s.lon], { radius: 10, color: '#3ee08f', weight: 3, fillColor: '#3ee08f', fillOpacity: 0.35 }).addTo(map).bindTooltip('Ship now (from itinerary)', { permanent: true });
     }
     map.fitBounds(pl.getBounds(), { padding: [20, 20] });
@@ -1758,22 +1757,23 @@
   }
   const basicRefresh = () => { if (MODE === 'basic') safe(renderBasic); };
 
-  // From 06:00 ship time "tonight" is the coming night: the cruise night on board, before the cruise Tromsø (practice).
-  // "Tonight" = the night in progress; once its darkness is over (about 04:45), the coming night.
+  // "Tonight" = the night in progress until its darkness ends at its place (nightEnd), then the coming night.
+  // Before the cruise nights it is Tromsø (practice, from the model check); after the last one there is none (n: null).
   function basicTonight() {
+    const first = D.nights[0].date, last = D.nights[D.nights.length - 1].date;
     const pick = (date) => {
       const cruise = D.nights.find((n) => n.date === date);
-      if (cruise) return { n: cruise, practice: false };
-      const mc = D.model_check && D.model_check.nights.find((n) => n.date === date && n.spot === 'Tromsø');
-      return mc ? { n: mc, practice: true } : null;
+      if (cruise) return { date, n: cruise, practice: false };
+      const mc = date < first && D.model_check ? D.model_check.nights.find((n) => n.date === date && n.spot === 'Tromsø') : null;
+      return { date, n: mc || null, practice: date < first };
     };
     const s = shipDate(Date.now());
     if (s.getUTCHours() < 12) s.setUTCDate(s.getUTCDate() - 1);
     const t = pick(s.toISOString().slice(0, 10));
-    const dark = t ? t.n.hourly.filter((h) => h.dark) : [];
-    if (t && dark.length && new Date(dark[dark.length - 1].t).getTime() + 3600e3 > Date.now()) return t;
+    if (t.n && nightEnd(t.n) > Date.now()) return t;
     s.setUTCDate(s.getUTCDate() + 1);
-    return pick(s.toISOString().slice(0, 10)) || t;
+    const next = pick(s.toISOString().slice(0, 10));
+    return next.n || next.date > last ? next : t;
   }
   const cloudRange = (a, b) => (a === b ? `${a}%` : `${a}–${b}%`);
 
@@ -1821,11 +1821,15 @@
   }
 
   // "Changed at 15:30: was GO 21:00–23:00 (5–31% cloud), now NO (85–100% cloud)" from the forecast runs of today.
-  function basicChange(date) {
+  function basicChange(date, v) {
     const runs = (TLOG && TLOG[date]) || [];
     if (runs.length < 2) return '';
     const key = (r) => `${r.verdict}|${r.window || ''}`;
     const now = runs[runs.length - 1];
+    // the robot's latest answer must still be the one on the card: when a window has ended since its last run,
+    // the card already says something else and an older "now" would contradict it
+    const shown = v.big === 'GO' || v.big === 'MAYBE' ? `${v.big}|${v.small}` : v.big === 'NO' ? 'NO|' : 'far|';
+    if (key(now) !== shown) return '';
     let i = runs.length - 2;
     while (i >= 0 && key(runs[i]) === key(now)) i--;
     if (i < 0) return '';
@@ -1906,8 +1910,7 @@
 
   // Aurora now: the nearest fresh FMI magnetometer when there is one (up north), else Kp / Hp30 / OVATION.
   function basicAuroraNow() {
-    const s = shipNow();
-    const [lat, lon] = s.sailing ? [s.lat, s.lon] : [69.65, 18.96];
+    const [lat, lon] = herePos();
     const need = kpNeedAt(lat, lon);
     if (sunAltAt(new Date(), lat, lon) > -6) return ['day', 'Daylight', 'too bright to see aurora now; check again after dark'];
     const R = Math.PI / 180;
@@ -1944,6 +1947,7 @@
     if (!h0) {
       // daytime: tonight's sky in one line
       const dark = n ? n.hourly.filter((h) => h.dark && h.cloud_met != null) : [];
+      if (!n) return ['', '–', 'no night to forecast'];
       if (!dark.length) return ['', 'Daytime', `no cloud forecast for tonight yet${drift}`];
       const clear = dark.filter((h) => h.cloud_met <= CLEAR_LINE);
       return [clear.length ? 'ok2' : '', clear.length ? `Tonight: clear from ${clear[0].local}` : 'Tonight: cloudy',
@@ -1958,11 +1962,15 @@
     return [c <= CLEAR_LINE ? 'ok2' : '', big, `forecast cloud ${c}% (MET)${drift}`];
   }
 
-  function basicShip() {
+  function basicShip(t) {
     const s = shipNow();
+    if (s.phase === 'over') return ['Home', 'the cruise is over'];
     if (!s.sailing) {
-      const days = Math.ceil((new Date(D.trip.start) - Date.now()) / 864e5);
-      return [days > 0 ? `${days} days to go` : 'Not sailing', 'until then "tonight" is Tromsø, for practice'];
+      // calendar days in ship time, the same count as the morning notification
+      const days = Math.round((new Date(shipDate(D.trip.start).toISOString().slice(0, 10)) - new Date(shipDate(Date.now()).toISOString().slice(0, 10))) / 864e5);
+      const from = D.trip.stops[0];
+      if (days <= 0) return ['Sailing today', `from ${esc(from.name)} at ${hm(D.trip.start)} ship time (${localHm(D.trip.start, from.lat)} local time there)`];
+      return [`${days} day${days > 1 ? 's' : ''} to go`, t && t.practice ? 'until then "tonight" is Tromsø, for practice' : 'the cruise nights start tonight'];
     }
     const now = Date.now();
     const port = D.trip.stops.find((st) => st.arrive && st.depart && new Date(st.arrive) <= now && now <= new Date(st.depart));
@@ -1976,11 +1984,15 @@
   function basicWeather() {
     const h = WX && WX.here;
     if (!h || !h.series || !h.series.length) return '';
-    const rows = h.series.filter((e) => new Date(e.t).getTime() >= Date.now() - 3600e3).filter((_, i) => i % 2 === 0);
+    const rows = h.series.filter((e) => new Date(e.t).getTime() + 3600e3 > Date.now()).filter((_, i) => i % 2 === 0); // from the current hour
     if (!rows.length) return '';
-    const places = [...new Set(h.series.map((e) => e.place))];
+    // the places of the rows shown: Tromsø while practising, then the ship's planned position hour by hour
+    const places = [...new Set(rows.map((e) => e.place))];
+    const practice = places.every((p) => /^Tromsø/.test(p)) && (h.practice ?? !h.sailing);
+    const where = practice ? 'Tromsø, the practice spot until the cruise starts'
+      : places.some((p) => /practice/.test(p)) ? `hour by hour: ${esc(places.join(' → '))}` : `where the ship will be each hour: ${esc(places.join(' → '))}`;
     return `<div class="b-card"><div class="b-k">Weather here · next 24 hours</div>
-      <div class="bplace-s" style="margin-top:4px">${h.sailing ? `where the ship will be each hour: ${esc(places.join(' → '))}` : 'Tromsø, the practice spot until the cruise starts'}</div>
+      <div class="bplace-s" style="margin-top:4px">${where}</div>
       <div class="wx-sum">${wxSummaryLine(h.summary)}</div>${adviceChips(h.advice)}${wxTable(rows, 65)}
       <p class="hint" style="margin:6px 0 0">Every 2nd hour shown · MET Norway · updated with each forecast run.</p></div>`;
   }
@@ -1989,10 +2001,16 @@
   // the evening's forecast, MET's cloud analysis when it has arrived), so it is there as soon as the night ends.
   function basicPrevNight(t) {
     if (!t) return null;
-    const d0 = new Date(t.n.date + 'T12:00:00Z');
+    const d0 = new Date(t.date + 'T12:00:00Z');
     d0.setUTCDate(d0.getUTCDate() - 1);
-    const date = d0.toISOString().slice(0, 10);
-    const cruiseN = !t.practice ? D.nights.find((n) => n.date === date) : null;
+    return nightResult(d0.toISOString().slice(0, 10));
+  }
+
+  // What happened on a finished night: before the cruise the practice night in Tromsø, else the cruise night at
+  // the ship's position. One verdict for the basic "Last night" card and the advanced PAST cards.
+  function nightResult(date) {
+    const cruiseN = D.nights.find((n) => n.date === date);
+    if (!cruiseN && date > D.nights[0].date) return null; // after the cruise nights: nothing to tell
     const [lat, lon, place] = cruiseN ? [cruiseN.lat, cruiseN.lon, shortPlace(cruiseN.place)] : [69.65, 18.96, 'Tromsø'];
     const R = Math.PI / 180;
     const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(la * R) + Math.cos(lat * R) * Math.cos(la * R) * Math.cos((lon - lo) * R)));
@@ -2069,7 +2087,7 @@
       : nearby.length && clearHere ? `Aurora was out nearby (${names}) and the sky here had clear hours: low in the north it may have been visible.`
       : here ? (clearHere ? 'Clear sky, but no aurora on the camera.' : 'Cloudy, and no aurora on the camera.')
       : clearHere == null ? 'No camera here; the cloud analysis is not in yet.'
-      : !clearHere ? `No clear dark hours${vs ? ` (${vs})` : ''}: nothing to see.`
+      : !clearHere ? `${metClear && metClear.length ? `No 2-hour clear gap, only single clear hours (${span(metClear.map((h) => h.slice(0, 2)))})` : 'No clear dark hours'}${vs ? ` (${vs})` : ''}: nothing to see.`
       : strong ? `No camera here to confirm it, but it was ${clearTxt} and activity was strong enough (${vs}): aurora was possible.`
       : `It was ${clearTxt}, but activity was too weak for this latitude${vs ? ` (${vs})` : ''}.`;
     // the evening's forecast and whether it was right about the clouds
@@ -2125,7 +2143,11 @@
       <div class="pstrip" data-row="0">${HOURS.map((h, i) => `<div data-i="${i}" role="button" tabindex="0">${icon(i)}<i class="${bar(h)}"></i>${h}</div>`).join('')}</div>
       <div class="bwhy" id="b-lastwhy"><span class="btap">👆 Tap an hour to see what happened</span></div>
       <div class="blegend">${here ? '<span><b class="a"></b>aurora</span>' : ''}<span><b class="cl"></b>clear${here ? ', no aurora' : ' (≤40%)'}</span><span><b class="c"></b>cloudy</span><span><b class="m"></b>${here ? 'bright (moon / twilight)' : 'twilight (too bright)'}</span></div>` : '';
-    return { date, place, practice: t.practice, skyHead: atSea ? 'Sky at the ship' : `Sky in ${place}`, big, aur, sky: skyT, line, fc, alerts, strips, why: (i) => why(i), short: `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]} · ${line}` };
+    const head = `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]}`;
+    const needM = need ?? kpNeedAt(lat, lon);
+    const measured = top ? `${top[0]} max ${top[1].toFixed(1)} → ${top[1] >= needM ? 'enough' : 'below'} (${needM.toFixed(1)} needed here)` : '';
+    return { date, place, practice: !cruiseN, skyHead: atSea ? 'Sky at the ship' : `Sky in ${place}`, big, head, aur, sky: skyT, line, fc, alerts, strips,
+      here, measured, why: (i) => why(i), short: `${head} · ${line}` };
   }
 
   function prevNightCard(P) {
@@ -2146,9 +2168,10 @@
     if (!el || !D) return;
     const t = basicTonight();
     const s = shipNow();
+    const nightsOver = t && t.date > D.nights[D.nights.length - 1].date;
     let tonight = `<div class="b-card"><div class="b-k">Tonight</div><div class="b-sub" style="margin-top:6px">${
-      Date.now() > new Date(D.trip.end) ? 'The cruise is over. The last nights are under Advanced.' : 'No forecast for tonight yet.'}</div></div>`;
-    if (t) {
+      nightsOver || Date.now() > new Date(D.trip.end) ? 'The cruise nights are over. All of them are under Advanced.' : 'No forecast for tonight yet.'}</div></div>`;
+    if (t && t.n) {
       const v = basicVerdict(t.n);
       tonight = `<div class="b-card">
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
@@ -2158,19 +2181,19 @@
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
           `<div class="bf ${f.cls}"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
         <div class="bline">${esc(v.line)}</div>
-        ${basicChange(t.n.date) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date))}</div>` : ''}
+        ${basicChange(t.n.date, v) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date, v))}</div>` : ''}
         <div class="b-sub">${esc(darkText(t.n))}</div>
         ${basicStrip(t.n)}</div>`;
     }
     const [acls, aword, atxt] = basicAuroraNow();
     const [scls, sword, stxt] = basicSky(t && t.n);
-    const [shipword, shiptxt] = basicShip();
+    const [shipword, shiptxt] = basicShip(t);
     const tile = (k, v, cls, txt) => `<div class="nt"><div class="b-k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${txt}</div></div>`;
-    const upcoming = D.nights.filter((n) => !isPast(n) && !(t && !t.practice && n.date === t.n.date));
+    const upcoming = D.nights.filter((n) => !isPast(n) && n.date !== (t && t.date));
     // Last night: a full card above tonight in the morning (until noon), one line further down later in the day
     const P = basicPrevNight(t);
-    const morning = shipDate(Date.now()).getUTCHours() < 12 && !!t && t.n.date === shipDate(Date.now()).toISOString().slice(0, 10);
-    const hourly = t && metCovers(t.n) ? `<details class="b-card bhourly" id="b-hourly"><summary>📊 Detailed hourly · ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}, tonight</summary>
+    const morning = shipDate(Date.now()).getUTCHours() < 12 && !!t && t.date === shipDate(Date.now()).toISOString().slice(0, 10);
+    const hourly = t && t.n && metCovers(t.n) ? `<details class="b-card bhourly" id="b-hourly"><summary>📊 Detailed hourly · ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}, tonight</summary>
         <div class="legend">
           <span><i style="background:#3987e5"></i>Cloud cover, MET Norway (left axis) · below the white 40% line = clear enough</span>
           <span><i class="line" style="background:#e8743b"></i>Kp forecast (right axis)</span>
@@ -2179,15 +2202,16 @@
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
-      <div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
-        <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>
-      <div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
+      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
+        <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>`}
+      ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
           <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div>
-          <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>
+          <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>`}
       ${P && !morning ? `<div class="b-card"><div class="b-k">Last night · ${dayLabel(P.date)} · ${esc(P.place)}</div><div class="blast">${esc(P.short)}</div>${P.fc ? `<div class="b-sub" style="margin-top:4px">${P.fc}</div>` : ''}</div>` : ''}
       ${basicWeather()}
-      <div class="balerts">🔔 ${s.sailing ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the cruise starts.'}</div>
+      <div class="balerts">🔔 ${s.phase === 'over' ? 'Alerts have stopped: the cruise is over.'
+        : Date.now() >= new Date(D.trip.start).getTime() - 6 * 3600e3 ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the day of departure.'}</div>
       <details class="bhow"><summary>How is this decided?</summary>
         <p><b>Where</b>: before the cruise, "tonight" is Tromsø, for practice. On board it follows the ship's planned position hour by hour, from Princess' published itinerary: the port while docked, the route between ports at sea. It is not live GPS, so a change of course or schedule is not known here.</p>
         <p><b>Tonight, hour by hour</b> (MET Norway's local forecast, about 2.5 days ahead):
@@ -2210,7 +2234,7 @@
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
       </details>
       <a href="#" class="badv" id="b-adv">Advanced view: all numbers, charts and explanations →</a>`;
-    if (t) {
+    if (t && t.n) {
       const hrs = t.n.hourly.filter((h) => h.sun < -3);
       const cells = el.querySelectorAll('.bstrip > div');
       cells.forEach((c) => c.addEventListener('click', () => tapSelect(cells, c, () => basicWhy(hrs[+c.dataset.i], t.n), $('#b-why'), '👆 Tap an hour to see why')));

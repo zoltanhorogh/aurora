@@ -5,7 +5,8 @@
     At most 2 per day. The very first run sends the baseline so you know it is working.
   * Morning digest: once a day between 08:00 and 12:00 ship/Hungarian time (UTC+2),
     with the change since the previous digest.
-Both stop after the cruise. State lives in data/notify_state.json.
+Both only look at nights that are not over yet (a night is over when its darkness ends at the ship),
+and both stop after the cruise. State lives in data/notify_state.json.
 
 Usage: python notify.py [--dry-run] [--now 2026-09-28T06:20:00Z]
 """
@@ -13,7 +14,7 @@ import argparse
 from datetime import timedelta
 
 from alert import DASHBOARD, send
-from common import CONFIG, DATA, iso, load_json, parse_utc, save_json, utcnow
+from common import CONFIG, DATA, iso, load_json, night_end, parse_utc, save_json, utcnow
 
 CHANGE_PTS = 0.05
 MAX_CHANGES_PER_DAY = 2
@@ -44,7 +45,15 @@ def line(n, prev=None):
 
 
 def link(date):
-    return f"{DASHBOARD}?night={date}"
+    return f"{DASHBOARD}?night={date}" if date else DASHBOARD
+
+
+def countdown(now, start):
+    """Same words as the page: calendar days (ship time) until departure, then "Sailing today", "On board"."""
+    if now >= start:
+        return "On board"
+    days = ((start + timedelta(hours=LOCAL_OFFSET)).date() - (now + timedelta(hours=LOCAL_OFFSET)).date()).days
+    return "Sailing today" if days <= 0 else f"{days} day{'s' if days > 1 else ''} to go"
 
 
 def main():
@@ -62,11 +71,12 @@ def main():
         print("cruise is over — no forecast notifications")
         return
 
-    nights = {n["date"]: n for n in latest["nights"]}
+    # only nights that are not over yet: a past night's score keeps being recomputed and must not count
+    upcoming = [n for n in latest["nights"] if night_end(n) > now]
+    nights = {n["date"]: n for n in upcoming}
     watch = [nights[d] for d in it["watch_nights"] if d in nights]
     cur = {n["date"]: {"score": n["score"], "rating": n["rating"]} for n in watch}
-    best = max(latest["nights"], key=lambda n: n["score"])
-    days_to_go = (parse_utc(latest["trip"]["start"]) - now).days
+    best = max(upcoming, key=lambda n: n["score"]) if upcoming else None
     state = load_json(DATA / "notify_state.json", {}) or {}
     changed = False
 
@@ -76,7 +86,7 @@ def main():
              "Baseline for the Arctic nights: " + " · ".join(line(n) for n in watch)
              + f". You'll get a message when one moves ≥{round(CHANGE_PTS * 100)} points or changes rating, "
              "plus a morning outlook around 08:15.",
-             priority=3, tags=["bar_chart"], click=link(best["date"]), dry=args.dry_run)
+             priority=3, tags=["bar_chart"], click=link(best and best["date"]), dry=args.dry_run)
         # digest_date=today: the first morning digest comes tomorrow, not together with this message
         state.update(baseline=cur, digest_values=cur, digest_date=today, cmes_sent=[], change_day=today, changes_today=0)
         changed = True
@@ -97,7 +107,7 @@ def main():
             for c in new_cmes:
                 parts.append(f"☀️ CME expected {parse_utc(c['arrival']).strftime('%a %d %b %H:%M')} UTC, Kp {c.get('kp_min')}–{c.get('kp_max')}")
             up = sum(n["score"] - base[n["date"]]["score"] for n in moved)
-            focus = max(moved, key=lambda n: abs(n["score"] - base[n["date"]]["score"]))["date"] if moved else best["date"]
+            focus = max(moved, key=lambda n: abs(n["score"] - base[n["date"]]["score"]))["date"] if moved else best and best["date"]
             send(f"{'📈' if up >= 0 else '📉'} Aurora outlook changed", " · ".join(parts),
                  priority=4 if new_cmes else 3, tags=["chart_with_upwards_trend" if up >= 0 else "chart_with_downwards_trend"],
                  click=link(focus), dry=args.dry_run)
@@ -112,12 +122,12 @@ def main():
     if DIGEST_HOURS[0] <= local.hour < DIGEST_HOURS[1] and state.get("digest_date") != today:
         # Short on purpose: best night, the range of the Arctic nights, and at most two notable moves.
         prev = state.get("digest_values") or {}
-        head = f"{days_to_go} days to go" if days_to_go > 0 else "On board"
+        head = countdown(now, parse_utc(latest["trip"]["start"]))
         pcts = [round(n["score"] * 100) for n in watch]
         moves = sorted((n for n in watch if n["date"] in prev
                         and abs(round(n["score"] * 100) - round(prev[n["date"]]["score"] * 100)) >= DIGEST_MOVE_PTS),
                        key=lambda n: -abs(n["score"] - prev[n["date"]]["score"]))[:2]
-        parts = [head, f"Best night: {day_label(best['date'])} {round(best['score'] * 100)}% {best['rating']}"]
+        parts = [head] + ([f"Best night: {day_label(best['date'])} {round(best['score'] * 100)}% {best['rating']}"] if best else [])
         if moves:
             parts += [f"{'⬆' if n['score'] > prev[n['date']]['score'] else '⬇'} {day_label(n['date'])} {short_place(n['place'])} "
                       f"{round(prev[n['date']]['score'] * 100)}% → {round(n['score'] * 100)}%" for n in moves]
@@ -126,7 +136,7 @@ def main():
         ln = load_json(DATA / "last_night.json", {}) or {}
         if ln.get("text") and ln.get("date") == (local.date() - timedelta(days=1)).isoformat():
             parts.append(ln["text"])
-        send("🌅 Aurora outlook", " · ".join(parts), priority=3, tags=["sunrise"], click=link(best["date"]), dry=args.dry_run)
+        send("🌅 Aurora outlook", " · ".join(parts), priority=3, tags=["sunrise"], click=link(best and best["date"]), dry=args.dry_run)
         state.update(digest_date=today, digest_values=cur)
         changed = True
 

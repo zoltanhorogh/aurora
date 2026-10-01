@@ -62,8 +62,10 @@ def http_get(url, timeout=60, retries=3):
                 return r.read().decode("utf-8")
         except Exception as e:  # network hiccups are common on shared runners
             last = e
+            if getattr(e, "code", None) == 429:
+                break  # request quota used up: retrying within seconds only wastes time
             time.sleep(2 + attempt * 3)
-    raise RuntimeError(f"GET failed: {url}: {last}")
+    raise RuntimeError(f"GET failed ({last}): {url}")  # the reason first: the status line is cut at 200 characters
 
 
 def http_get_json(url, timeout=60):
@@ -175,6 +177,48 @@ def night_hours(date):
     """Hourly UTC timestamps covering the evening of `date` to the next morning."""
     t0 = datetime(date.year, date.month, date.day, 15, tzinfo=UTC)
     return [t0 + timedelta(hours=h) for h in range(15)]  # 15:00Z .. 05:00Z next day
+
+
+# ---------------------------------------------------------------- when a night is over
+# One rule everywhere (page and scripts): a night is over when its darkness ends at its place
+# (the sun climbs back above -12°). Without a dark period: 06:00 ship time.
+
+DARK_SUN_ALT = -12               # same as build_climatology.DARK_SUN
+TROMSO = (69.65, 18.96)          # the practice spot before the cruise
+
+
+def _morning_fallback(d):
+    return datetime(d.year, d.month, d.day, 4, tzinfo=UTC) + timedelta(days=1)
+
+
+def darkness_end(d, lat, lon):
+    """End of the night that starts on date d at a fixed place (UTC datetime)."""
+    t = datetime(d.year, d.month, d.day, 22, tzinfo=UTC)  # local midnight (ship time UTC+2)
+    prev = sun_alt(t, lat, lon)
+    for _ in range(14 * 12):
+        tn = t + timedelta(minutes=5)
+        cur = sun_alt(tn, lat, lon)
+        if prev < DARK_SUN_ALT <= cur:
+            return t + timedelta(minutes=5) * ((DARK_SUN_ALT - prev) / (cur - prev))
+        t, prev = tn, cur
+    return _morning_fallback(d)
+
+
+def night_end(n):
+    """End of a scored night from update.py (latest.json): its darkness end at the ship's position."""
+    e = next((e for e in n.get("events", []) if e["kind"] == "dark_end"), None)
+    if e:
+        return parse_utc(e["t"])
+    dark = [h for h in n.get("hourly", []) if h["dark"]]
+    if dark:
+        return parse_utc(dark[-1]["t"]) + timedelta(hours=1)
+    return _morning_fallback(datetime.fromisoformat(n["date"]).date())
+
+
+def cruise_day_from(itinerary):
+    """When the first cruise night becomes "tonight": the end of the practice night before it (Tromsø)."""
+    first = datetime.fromisoformat(itinerary["nights_from"]).date()
+    return darkness_end(first - timedelta(days=1), *TROMSO)
 
 
 # ---------------------------------------------------------------- astronomy

@@ -3,11 +3,11 @@
 Puts together what the other jobs logged: the all-sky camera AI (sky_obs.json), the FMI magnetometers
 (mag.json, 24 h series), MET Norway's analysed cloud at Tromsø and Alta (verification.json), the alerts
 that went out (alert_state.json), plus GFZ Hp30. A night runs 18:00–06:00 ship time and counts as
-finished from 05:00 (darkness is over by then). Output: data/last_night.json
+finished when its darkness ends in Tromsø (same rule as the page). Output: data/last_night.json
 """
 from datetime import datetime, timedelta
 
-from common import DATA, UTC, fetch_hp30, iso, load_json, parse_utc, save_json, utcnow
+from common import DATA, TROMSO, UTC, darkness_end, fetch_hp30, iso, load_json, parse_utc, save_json, utcnow
 
 LOCAL_OFFSET = 2
 CAMS = {"tromso": "Tromsø", "skibotn": "Skibotn", "kiruna": "Kiruna"}
@@ -43,7 +43,8 @@ def hour_span(hours):
 
 def build(now):
     local = now + timedelta(hours=LOCAL_OFFSET)
-    d = (local - timedelta(days=1 if local.hour >= 5 else 2)).date()
+    y = (local - timedelta(days=1)).date()  # the night that started yesterday evening
+    d = y if now >= darkness_end(y, *TROMSO) else y - timedelta(days=1)
     t0 = datetime(d.year, d.month, d.day, 18 - LOCAL_OFFSET, tzinfo=UTC)
     t1 = t0 + timedelta(hours=12)
     out = {"date": d.isoformat(), "updated": iso(now)}

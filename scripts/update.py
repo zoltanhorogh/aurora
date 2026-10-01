@@ -6,9 +6,9 @@ import traceback
 from datetime import datetime, timedelta
 
 import last_night
-from common import (CONFIG, DATA, UTC, Route, fetch_hp30, http_get, http_get_json, iso, kp_required,
-                    load_json, mag_lat, moon_alt, moon_illum, night_dates, night_hours,
-                    norm_cdf, parse_utc, save_json, sun_alt, utcnow)
+from common import (CONFIG, DATA, TROMSO, UTC, Route, cruise_day_from, darkness_end, fetch_hp30, http_get,
+                    http_get_json, iso, kp_required, load_json, mag_lat, moon_alt, moon_illum, night_dates,
+                    night_end, night_hours, norm_cdf, parse_utc, save_json, sun_alt, utcnow)
 from build_climatology import CLEAR_MAX, DARK_SUN, clear_window
 
 SWPC = "https://services.swpc.noaa.gov"
@@ -319,6 +319,9 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
     mid = datetime(d.year, d.month, d.day, 22, tzinfo=UTC)
     evening = datetime(d.year, d.month, d.day, 18, tzinfo=UTC)
     lead = (evening - now).total_seconds() / 86400
+    events = night_events(d, route)
+    # a night whose darkness is over gets no new cloud forecasts (they would only replace what was forecast for it)
+    ended = night_end({"date": d.isoformat(), "events": events}) <= now
 
     # Sample the route at three times; each hour uses the nearest sample for clouds.
     sample_times = [datetime(d.year, d.month, d.day, 18, tzinfo=UTC), mid, mid + timedelta(hours=4)]
@@ -328,8 +331,8 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
         key = (round(p["lat"], 2), round(p["lon"], 2))
         if key not in uniq:
             uniq.append(key)
-    ens = fetch_ensemble(uniq, d) if lead <= 34 else None
-    met = [fetch_met(*p) or {} for p in uniq] if lead <= MET_MAX_LEAD else None
+    ens = fetch_ensemble(uniq, d) if lead <= 34 and not ended else None
+    met = [fetch_met(*p) or {} for p in uniq] if lead <= MET_MAX_LEAD and not ended else None
 
     rows = []
     for h in hours:
@@ -480,7 +483,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
                     "darkness": round(dark_f, 3), "moon_lights": round(ml_f, 3)},
         "score": round(score, 3), "rating": rating(score), "confidence": confidence(lead),
         "notes": notes,
-        "events": night_events(d, route),
+        "events": events,
         "hourly": rows,
     }
 
@@ -510,7 +513,9 @@ CHECK_DAYS = 3  # tonight, tomorrow, the day after (MET Norway reaches ~2.5 days
 def model_check(now, kp3_map, kp27_map, daily, cmes, clim):
     """The next CHECK_DAYS nights for Tromsø and Alta with exactly the cruise model, to compare with other apps."""
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
-    d0 = (local - timedelta(days=1) if local.hour < 6 else local).date()
+    # "tonight" is the night in progress until its darkness ends in Tromsø, then the coming night (as on the page)
+    y = (local - timedelta(days=1)).date()
+    d0 = y if now < darkness_end(y, *TROMSO) else local.date()
     days = [d0 + timedelta(days=k) for k in range(CHECK_DAYS)]
     nights = []
     for d in days:
@@ -749,8 +754,7 @@ def log_tonight(now, nights, mc):
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
     day = (local - timedelta(days=1) if local.hour < 12 else local).date()
     n = pick(day)
-    dark = [h for h in n["hourly"] if h["dark"]] if n else []
-    if not dark or parse_utc(dark[-1]["t"]) + timedelta(hours=1) <= now:
+    if not n or night_end(n) <= now:  # its darkness is over (same rule as the page)
         n = pick(day + timedelta(days=1)) or n
     if not n:
         return
@@ -780,7 +784,11 @@ def main():
     kp3_map = {r["t"]: r for r in kp3}
     kp27_map = {r["date"]: r["kp"] for r in kp27["days"]}
 
-    nights = [score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
+    # A cruise night that is over keeps the last forecast made before its end: the page shows what happened
+    # instead (cruise_log.json), and a recomputed score would only jump around (and cost API calls every run).
+    prev = {n["date"]: n for n in (load_json(DATA / "latest.json", {}) or {}).get("nights", [])}
+    nights = [prev[d.isoformat()] if d.isoformat() in prev and night_end(prev[d.isoformat()]) <= now
+              else score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
     carry_past_clouds(nights, mc, now)
     met_expected(nights + mc["nights"], now)
@@ -816,7 +824,7 @@ def main():
         "generated": iso(now),
         "ship_utc_offset": SHIP_UTC_OFFSET,
         "trip": {"ship": it["ship"], "title": it["title"], "start": iso(route.start), "end": iso(route.end),
-                 "stops": it["stops"]},
+                 "cruise_day_from": iso(cruise_day_from(it)), "stops": it["stops"]},
         "method": {
             "score": "activity × clear sky × darkness × moon & lights",
             "clear_definition": f"at least 2 consecutive dark hours with cloud cover ≤ {CLEAR_MAX}%",
