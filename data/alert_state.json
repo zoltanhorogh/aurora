@@ -1,8 +1,8 @@
 {
  "test": {
-  "night": "2026-09-29",
+  "night": "2026-10-01",
   "count": 1,
-  "last_alert": "2026-09-29T23:51:35Z",
-  "last_level": "watch"
+  "last_alert": "2026-10-01T20:49:05Z",
+  "last_level": "strong"
  }
 }
