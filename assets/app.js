@@ -935,20 +935,27 @@
   // We show the Scandinavian corner of the last hour as a short loop, and the wind at ~3 km height
   // (700 hPa, the level clouds drift with) at the ship, as an arrow: which way the clouds are moving.
   const SAT = 'https://api.met.no/weatherapi/geosatellite/1.4/';
-  const SAT_CROP = { x: 600, y: 0, w: 480, h: 300, W: 1280, H: 720 }; // Scandinavia in the 1280x720 Europe picture
+  // Crops of the 1280x720 Europe picture (same 1.6 aspect): northern Norway (Lofoten to Kola) and all of Scandinavia
+  const SAT_CROPS = { north: { x: 760, y: 15, w: 200, h: 125, label: 'Northern Norway' }, scand: { x: 600, y: 0, w: 480, h: 300, label: 'Scandinavia' } };
+  const SAT_W = 1280, SAT_H = 720;
+  let satView = null; // null = follow the ship: northern Norway from Trondheim northwards (and before the cruise), else Scandinavia
   const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
   let satTimer = null;
 
   function renderSat() {
     const el = $('#sat');
     if (!el) return;
-    const c = SAT_CROP;
+    const s = shipNow();
+    const view = satView || (!s.sailing || s.lat >= 63 ? 'north' : 'scand');
+    const c = SAT_CROPS[view];
     el.innerHTML = `<h3>Clouds from space <span class="why">· last hour</span></h3>
       <p class="hint" style="margin-top:0">Satellite picture (Meteosat, infrared, works at night): <b>white = cloud</b> (the brighter, the higher and colder), <b>blue = clear sea</b>, <b>green = clear land</b>. The frames of the last hour play in a loop, so you can see which way the clouds drift and whether a clear gap is coming.</p>
-      <div class="satbox" style="padding-top:${(c.h / c.w) * 100}%"><img id="sat-img" alt="Meteosat infrared picture of Scandinavia" style="width:${(c.W / c.w) * 100}%;left:-${(c.x / c.w) * 100}%;top:-${(c.y / c.h) * 100}%"></div>
+      <div class="daytabs">${Object.entries(SAT_CROPS).map(([k, v]) => `<button class="btn ${k === view ? 'on' : ''}" data-v="${k}">${v.label}</button>`).join('')}</div>
+      <div class="satbox" style="padding-top:${(c.h / c.w) * 100}%"><img id="sat-img" alt="Meteosat infrared picture, ${c.label}" style="width:${(SAT_W / c.w) * 100}%;left:-${(c.x / c.w) * 100}%;top:-${(c.y / c.h) * 100}%"></div>
       <div class="hint" id="sat-time"></div>
       <div id="sat-wind" class="satwind"></div>
       <p class="hint">Norway is squeezed at the top: the satellite sits above the equator and sees the north at a low angle. Thin low cloud or fog can look like clear ground. Sharper pictures when a polar satellite passes (not always over the ship): <a href="https://api.met.no/weatherapi/polarsatellite/1.1/?area=nr&channel=ch4&satellite=noaa&size=l" target="_blank" rel="noopener">northern Norway</a> · <a href="https://api.met.no/weatherapi/polarsatellite/1.1/?area=nm&channel=ch4&satellite=noaa&size=l" target="_blank" rel="noopener">mid Norway</a>. Source: EUMETSAT / MET Norway; wind: Open-Meteo.</p>`;
+    el.querySelectorAll('.daytabs button').forEach((b) => b.addEventListener('click', () => { satView = b.dataset.v; renderSat(); }));
     loadSat();
   }
 
