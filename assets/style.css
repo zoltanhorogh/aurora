@@ -130,6 +130,14 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .btap { color: var(--aurora); font-weight: 600; text-transform: none; letter-spacing: 0; }
 .bnc .r { font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .blast { font-size: 14px; margin-top: 4px; }
+.btag { font-size: 10px; color: #0b0c0e; background: #f2c230; border-radius: 4px; padding: 1px 6px; font-weight: 700; letter-spacing: .06em; margin-left: 6px; }
+.rowlab { font-size: 11px; color: var(--muted); margin: 10px 0 3px; }
+.pstrip { display: grid; grid-template-columns: repeat(11, 1fr); gap: 4px; }
+.pstrip div { text-align: center; font-size: 11px; color: var(--muted); }
+.pstrip i { display: block; height: 22px; border-radius: 5px; margin-bottom: 3px; }
+.pstrip .a, .blegend .a { background: #1faa59; } .pstrip .cl, .blegend .cl { background: #6d8bbd; }
+.pstrip .c, .blegend .c { background: #3a3d44; } .pstrip .m, .blegend .m { background: #3a4a86; }
+.pstrip .na { background: #1c1d21; border: 1px dashed #3a3d44; }
 .bhow { margin: 14px 0 4px; font-size: 12px; color: var(--text-2); }
 .bhow summary { color: var(--muted); font-size: 12px; cursor: pointer; }
 .bhow p { margin: 8px 0; line-height: 1.5; }
