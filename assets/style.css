@@ -97,6 +97,9 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .bstrip > div.sel { outline: 2px solid var(--aurora); }
 .bwhy { font-size: 12px; color: var(--text-2); margin-top: 8px; min-height: 18px; line-height: 1.5; }
 .bwhy .k, .bhow .k { display: inline-block; padding: 0 6px; border-radius: 4px; color: #0b0c0e; font-weight: 700; font-size: 11px; }
+.bwhy .kp { display: inline-block; padding: 0 6px; border-radius: 4px; font-weight: 700; font-size: 11px; background: #8b5cf6; color: #fff; }
+.b-sym { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 15px; font-weight: 800; color: #0b0c0e; }
+.b-sym.g { background: #1faa59; box-shadow: 0 0 18px #1faa59; } .b-sym.y { background: #f2c230; } .b-sym.n { background: #e5484d; color: #fff; } .b-sym.u { background: #555a63; color: #fff; }
 .bwhy .k.g { background: #1faa59; } .bwhy .k.y { background: #f2c230; } .bwhy .k.n { background: #3a3d44; color: var(--text); } .bwhy .k.t { background: #3a4a86; color: var(--text); }
 .bstrip i { display: block; height: 30px; border-radius: 6px; margin-bottom: 4px; }
 .bstrip .bico { display: block; width: 16px; height: 16px; margin: 0 auto 3px; }

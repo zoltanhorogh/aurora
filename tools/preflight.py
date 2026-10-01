@@ -144,6 +144,9 @@ INJECT = r"""<script>
         && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
       if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf').length === 2);
       if (b.querySelector('#b-last')) check('basic last-night card has its two tiles', b.querySelectorAll('#b-last .bfx .bf').length === 2);
+      // the morning card goes on top only once tonight's darkness is over, never in the middle of the night
+      if (b.querySelector('#b-last')) check('basic morning card only after the night', !b.querySelector('.bstrip > div.past'));
+      if (b.querySelector('#b-last')) check('basic last night has one hour strip', b.querySelectorAll('#b-last .pstrip').length <= 1);
       const lastCell = b.querySelector('#b-last .pstrip > div');
       if (lastCell) {
         lastCell.click();
