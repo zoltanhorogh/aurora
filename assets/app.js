@@ -391,6 +391,9 @@
   const AURORA_BY_UT = { 15: 33, 16: 46, 17: 50, 18: 60, 19: 72, 20: 78, 21: 85, 22: 83, 23: 81, 0: 77, 1: 72, 2: 71, 3: 58, 4: 48, 5: 45 };
   const auroraShare = (h) => (AURORA_BY_UT[new Date(h.t).getUTCHours()] ?? 30) / 100;
 
+  // Hours that are over keep their clouds (the robot carries the last forecast), but a stretch that is over is
+  // no answer for tonight any more: only stretches with an hour still to come count, weighted by those hours.
+  const hourAhead = (h) => new Date(h.t).getTime() + 3600e3 > Date.now();
   function bestWindow(n) {
     if (!metCovers(n)) return null;
     const st = n.hourly.map((h) => hourStatus(h)[0]);
@@ -401,15 +404,16 @@
         if (st[i] !== want) { i++; continue; }
         let j = i;
         while (j + 1 < st.length && st[j + 1] === want) j++;
-        runs.push([i, j]);
+        if (hourAhead(n.hourly[j])) runs.push([i, j]);
         i = j + 1;
       }
       if (!runs.length) continue;
-      const worth = (r) => (USE_TIME_CURVE ? n.hourly.slice(r[0], r[1] + 1).reduce((s, h) => s + auroraShare(h), 0) : r[1] - r[0]);
+      const left = (r) => n.hourly.slice(r[0], r[1] + 1).filter(hourAhead);
+      const worth = (r) => (USE_TIME_CURVE ? left(r).reduce((s, h) => s + auroraShare(h), 0) : left(r).length);
       const best = runs.reduce((b, r) => (worth(r) > worth(b) + 1e-9 ? r : b), runs[0]);
       const text = (r) => `${n.hourly[r[0]].local}–${hm(new Date(new Date(n.hourly[r[1]].t).getTime() + 3600e3))}`;
-      const peak = n.hourly.slice(best[0], best[1] + 1).reduce((b, h) => (auroraShare(h) > auroraShare(b) ? h : b));
-      return { label: want, text: text(best), peak: peak.local, others: runs.filter((r) => r !== best).map(text) };
+      const peak = left(best).reduce((b, h) => (auroraShare(h) > auroraShare(b) ? h : b));
+      return { label: want, text: text(best), peak: peak.local, hours: n.hourly.slice(best[0], best[1] + 1), others: runs.filter((r) => r !== best).map(text) };
     }
     return null;
   }
@@ -792,12 +796,14 @@
     const sw = D.space_weather;
     const w = sw.weekly || {};
     const cmes = sw.cmes || [];
+    // an empty list only means "none" when NASA's service answered; otherwise say it is not known
+    const cmeDown = D.sources && D.sources.nasa_donki_cme && !D.sources.nasa_donki_cme.ok;
     $('#swpc-text').innerHTML = `
       <h3>What the forecasters say</h3>
       <p class="hint" style="margin-top:0">The written forecast of NOAA's space weather forecasters (the people, not a model): the week ahead, the next 3 days, and solar eruptions heading to Earth.</p>
       <p><b>NOAA weekly forecast</b> (${esc(w.period || '')}, issued ${esc(w.issued || '–')}):<br>${esc(w.geomagnetic || 'not available')}</p>
       <p class="hint">Jargon: "CH HSS" = fast solar wind from a coronal hole, the typical source of moderate aurora activity at this stage of the solar cycle. "Unsettled/active" ≈ Kp 3–4, "G1" = Kp 5.</p>
-      <p><b>Solar eruptions (CMEs) heading to Earth:</b> ${cmes.length ? '' : 'none in NASA\'s model runs from the last 7 days.'}</p>
+      <p><b>Solar eruptions (CMEs) heading to Earth:</b> ${cmes.length ? '' : cmeDown ? 'not known right now: NASA\'s CME model service did not answer at the last update, so the forecast runs without it.' : 'none in NASA\'s model runs from the last 7 days.'}</p>
       ${cmes.length ? `<ul>${cmes.map((c) => `<li>Arrival ≈ ${esc(dayLabel(c.arrival.slice(0, 10)))} ${hm(c.arrival)} ship time${c.glancing ? ' (glancing blow)' : ''} · expected Kp ${c.kp_min ?? '?'}–${c.kp_max ?? '?'} ${c.link ? `· <a href="${esc(c.link)}" target="_blank" rel="noopener">details</a>` : ''}</li>`).join('')}</ul>` : ''}`;
   }
 
@@ -1785,20 +1791,23 @@
         sub: `hour by hour ${metFromText(n) ? `from ${metFromText(n)}` : 'later'}` };
       return { cls: ratingCls(n.rating), big: pct(n.score), small: 'chance', aur, sky, line: 'Too far ahead for hour-by-hour clouds yet.' };
     }
-    const hrs = n.hourly.filter((h) => h.dark && h.cloud_met != null);
+    // the dark hours still to come (all of them before the night starts): what is over is not tonight's answer any more
+    const all = n.hourly.filter((h) => h.dark && h.cloud_met != null);
+    const hrs = all.filter(hourAhead);
+    const rest = hrs.length < all.length ? 'for the rest of the night' : 'all night';
     const clearH = hrs.filter((h) => h.cloud_met <= CLEAR_LINE).length;
     const range = (hh) => { const c = hh.map((h) => Math.round(h.cloud_met)); return `${cloudRange(Math.min(...c), Math.max(...c))} cloud`; };
     const win = bestWindow(n);
     let sky;
     if (win) {
-      const inWin = hrs.filter((h) => hourStatus(h)[0] === win.label);
+      const inWin = win.hours;
       sky = inWin.every((h) => h.cloud_met <= CLEAR_LINE)
         ? { cls: 'ok', word: '✓ Clear gap', sub: `${range(inWin)} ${win.text}` }
         : { cls: 'mid', word: 'Partly cloudy', sub: `${range(inWin)} ${win.text}` };
     } else if (clearH) {
-      sky = { cls: 'ok', word: '✓ Clear', sub: `${clearH} of ${hrs.length} dark hours ≤40% cloud` };
+      sky = { cls: 'ok', word: '✓ Clear', sub: `${clearH} of ${hrs.length} dark hours ≤40% cloud${hrs.length < all.length ? ' still to come' : ''}` };
     } else {
-      sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} all night` : 'no clear hour' };
+      sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} ${rest}` : 'no clear hour' };
     }
     const line = aur.cls === 'ok' && sky.cls === 'bad' ? 'The aurora is there, the clouds hide it.'
       : aur.cls === 'bad' && sky.cls === 'ok' ? 'Clear sky, but the aurora is too weak here.'

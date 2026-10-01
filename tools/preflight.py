@@ -161,6 +161,20 @@ INJECT = r"""<script>
         check('basic detailed hourly opens with chart and hours', !!bh.querySelector('#b-chart svg') && !!bh.querySelector('.hr'));
         bh.querySelector('summary').click();
       }
+      // tonight's answer is never a stretch that is already over (hours that are over keep their clouds)
+      const vt = b.querySelector('#basic > .b-card:not(#b-last) .b-verdict');
+      const win = vt && (vt.querySelector('small') || {}).textContent;
+      const wm = win && win.match(/(\d\d):\d\d–(\d\d):\d\d/);
+      if (wm) {
+        const lastH = String((+wm[2] + 23) % 24).padStart(2, '0');
+        const lastCell = [...b.querySelectorAll('.bstrip > div')].find((c) => c.textContent.trim().endsWith(lastH));
+        check('basic tonight window is not over yet', !lastCell || !lastCell.classList.contains('past'), win);
+      }
+      if (P.get('expect') === 'nowindow') {
+        const sky = [...b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf')].map((x) => x.textContent).join(' | ');
+        check('basic tonight: a window that is over is not the answer', vt && /^NO/.test(vt.textContent.trim()) && /Cloudy/.test(sky),
+          `${vt ? vt.textContent.trim() : 'no verdict'} | ${sky}`);
+      }
       const cell = b.querySelector('.bstrip > div');
       if (cell) {
         cell.click();
@@ -179,6 +193,10 @@ INJECT = r"""<script>
     }
     const ln = document.querySelector('#last-night');
     check('last night panel rendered (or hidden without data)', ln && (ln.style.display === 'none' || /Last night up north/.test(ln.textContent)));
+    // "no CME" may only be said when NASA's service answered
+    const latest = await fetch('data/latest.json').then((r) => r.json()).catch(() => null);
+    const cme = latest && latest.sources && latest.sources.nasa_donki_cme;
+    if (cme && !cme.ok) check('CME text does not claim "none" while NASA failed', !/none in NASA/.test(document.querySelector('#swpc-text').textContent));
     const out = document.createElement('script');
     out.type = 'application/json';
     out.id = 'pf-result';
@@ -231,6 +249,57 @@ def shifted_config(dst):
     return days, json.loads(text)
 
 
+def source_problems(data_dir, label):
+    """Every data source of the last pipeline run must have answered (a dead API must not pass silently:
+    the NASA CME service moved on 30 Sep 2026 and the page went on saying "no CME")."""
+    out = []
+    for f in ("latest.json", "weather.json"):
+        js = json.loads((data_dir / f).read_text(encoding="utf-8")) if (data_dir / f).exists() else {}
+        for k, v in (js.get("sources") or {}).items():
+            if not v.get("ok"):
+                out.append(f"{label}: data source {k} failing in {f}: {v.get('error', '')[:160]}")
+    return out
+
+
+def tonight_of(latest, d):
+    """The night the Basic view shows as tonight on date d: the cruise night, else the Tromsø model check night."""
+    return next((n for n in latest["nights"] if n["date"] == d), None) or next(
+        (n for n in (latest.get("model_check") or {}).get("nights", []) if n["date"] == d and n.get("spot") == "Tromsø"), None)
+
+
+def make_past_window(latest):
+    """Tonight with its clear stretch already over (kept clouds, strong activity) and overcast for the rest of the
+    night, at 03:30 ship time. Returns the clock (UTC) or None."""
+    d = (latest.get("model_check") or {}).get("date")
+    n = tonight_of(latest, d) if d else None
+    if not n:
+        return None
+    clock = datetime.fromisoformat(d + "T01:30:00+00:00") + timedelta(days=1)  # 03:30 ship time
+    n["clear"]["source"] = "MET Norway"
+    for h in n["hourly"]:
+        if not h["dark"]:
+            continue
+        if datetime.fromisoformat(h["t"].replace("Z", "+00:00")) + timedelta(hours=1) <= clock:
+            h.update(cloud_met=5.0, cloud_past=True, p_act=0.9)  # over: clear and strong (a GO stretch)
+        else:
+            h.update(cloud_met=95.0)  # still to come: overcast
+    return clock
+
+
+def check_tonight_answer(problems):
+    """The robot's tonight log must not answer with a window that is over either (update.tonight_answer)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import update  # noqa: E402  (scripts folder on the path only here)
+    latest = json.loads((ROOT / "data" / "latest.json").read_text(encoding="utf-8"))
+    clock = make_past_window(latest)
+    if clock is None:
+        return
+    d = latest["model_check"]["date"]
+    ans = update.tonight_answer(tonight_of(latest, d), clock)
+    if ans["verdict"] != "NO" or ans["window"]:
+        problems.append(f"update.tonight_answer answers with a window that is over: {ans['verdict']} {ans['window']}")
+
+
 def run_script(name, args, env, problems, label):
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / name), *args], cwd=ROOT / "scripts", env=env,
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
@@ -269,6 +338,13 @@ def main():
         except py_compile.PyCompileError as e:
             problems.append(f"compile {f.name}: {e.msg}")
     print(f"  {len(problems) == 0 and 'ok ' or 'FAIL'} scripts")
+    # The published data comes from the robot's last run with the code that is live now, so a failing source there is
+    # a warning (this push may be the fix); the pipeline runs below use the new code, and there it is an error.
+    warnings = source_problems(ROOT / "data", "published data (robot's last run)")
+    n0 = len(problems)
+    check_tonight_answer(problems)
+    print(f"  {len(problems) == n0 and 'ok ' or 'FAIL'} tonight log rule"
+          + (f" · {len(warnings)} warning(s) about the published data" if warnings else ""))
 
     tmp = Path(tempfile.mkdtemp(prefix="aurora-preflight-"))
     web = tmp / "web"
@@ -279,6 +355,14 @@ def main():
         # As it is today (before the cruise).
         make_site(web / "now", ROOT / "data")
         scenarios.append(("today, as published", "now", 0))
+        # Synthetic: tonight's clear stretch is already over and the rest of the night is overcast (03:30 ship time)
+        make_site(web / "pastwin", ROOT / "data")
+        pw = web / "pastwin" / "data" / "latest.json"
+        latest_pw = json.loads(pw.read_text(encoding="utf-8"))
+        clock_pw = make_past_window(latest_pw)
+        if clock_pw:
+            pw.write_text(json.dumps(latest_pw, ensure_ascii=False), encoding="utf-8")
+            scenarios.append(("tonight: the window is over, overcast after", "pastwin", int((clock_pw - now).total_seconds()), "&expect=nowindow"))
         it = json.loads((ROOT / "config" / "itinerary.json").read_text(encoding="utf-8"))
         tos = next(s for s in it["stops"] if s.get("id") == "TOS")
         in_tromso = datetime.fromisoformat(tos["arrive"].replace("Z", "+00:00")) + timedelta(hours=11)
@@ -307,6 +391,7 @@ def main():
             here = (json.loads((data_ship / "weather.json").read_text(encoding="utf-8")) or {}).get("here")
             if not here or not here.get("series"):
                 problems.append(f"{label}: weather.json has no 'here' forecast (Basic weather card would be empty)")
+            problems += source_problems(data_ship, label)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [
@@ -322,8 +407,8 @@ def main():
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             chrome = find_chrome()
-            for name, site, clock in scenarios:
-                res = page_check(chrome, f"http://127.0.0.1:{port}/{site}/_preflight.html?clock={clock}", tmp / "chrome")
+            for name, site, clock, *extra in scenarios:
+                res = page_check(chrome, f"http://127.0.0.1:{port}/{site}/_preflight.html?clock={clock}{''.join(extra)}", tmp / "chrome")
                 failed = [c for c in res["checks"] if not c["ok"]]
                 ok = not res["errors"] and not failed
                 print(f"  {'ok ' if ok else 'FAIL'} {name}: {len(res['checks'])} checks, {len(res['errors'])} errors")
@@ -340,6 +425,8 @@ def main():
             shutil.rmtree(tmp, ignore_errors=True)
 
     print()
+    for w in warnings:
+        print(" ! warning:", w)
     if problems:
         counts = {}
         for p in problems:

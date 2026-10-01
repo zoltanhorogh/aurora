@@ -1,5 +1,6 @@
 """Forecast pipeline: pulls space-weather + cloud forecasts, scores every cruise night,
 writes data/latest.json and appends a snapshot to data/history.json."""
+import json
 import re
 import traceback
 from datetime import datetime, timedelta
@@ -122,7 +123,11 @@ def fetch_hp30_since(start, now):
 def fetch_cmes(now):
     start = (now - timedelta(days=7)).date().isoformat()
     end = now.date().isoformat()
-    sims = http_get_json(f"https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/WSAEnlilSimulations?startDate={start}&endDate={end}")
+    # CCMC moved the DONKI API on 30 Sep 2026 (the old kauai.ccmc... address now redirects to a news page)
+    txt = http_get(f"https://ccmc.gsfc.nasa.gov/DONKI-API/get/WSAEnlilSimulations?startDate={start}&endDate={end}")
+    sims = json.loads(txt) if txt.strip() else []  # an empty body means no model runs in the period
+    if not isinstance(sims, list):
+        raise ValueError("unexpected DONKI answer")
     best = {}
     for s in sims or []:
         arr = s.get("estimatedShockArrivalTime")
@@ -694,7 +699,7 @@ USE_TIME_CURVE = True
 AURORA_BY_UT = {15: 33, 16: 46, 17: 50, 18: 60, 19: 72, 20: 78, 21: 85, 22: 83, 23: 81, 0: 77, 1: 72, 2: 71, 3: 58, 4: 48, 5: 45}
 
 
-def tonight_answer(n):
+def tonight_answer(n, now):
     dark = [h for h in n["hourly"] if h["dark"] and h["cloud_met"] is not None]
     clouds = [round(h["cloud_met"]) for h in dark]
     out = {"cloud": [min(clouds), max(clouds)] if clouds else None,
@@ -702,11 +707,15 @@ def tonight_answer(n):
     if not n["clear"]["source"].startswith("MET Norway"):
         return {**out, "verdict": "far", "window": None, "score": n["score"]}
     st = [hour_verdict(h) for h in n["hourly"]]
+    # Hours that are over keep their clouds (carry_past_clouds), but a window that is over is no answer
+    # for tonight any more: only stretches with an hour still to come count, weighted by those hours.
+    ahead = [parse_utc(h["t"]) + timedelta(hours=1) > now for h in n["hourly"]]
 
     def worth(r):
+        idx = [k for k in range(r[0], r[1] + 1) if ahead[k]]
         if not USE_TIME_CURVE:
-            return r[1] - r[0]
-        return sum(AURORA_BY_UT.get(parse_utc(h["t"]).hour, 30) / 100 for h in n["hourly"][r[0]:r[1] + 1])
+            return len(idx)
+        return sum(AURORA_BY_UT.get(parse_utc(n["hourly"][k]["t"]).hour, 30) / 100 for k in idx)
 
     for want in ("GO", "TRY"):
         runs, i = [], 0
@@ -717,7 +726,8 @@ def tonight_answer(n):
             j = i
             while j + 1 < len(st) and st[j + 1] == want:
                 j += 1
-            runs.append((i, j))
+            if ahead[j]:
+                runs.append((i, j))
             i = j + 1
         best = None
         for r in runs:
@@ -747,7 +757,7 @@ def log_tonight(now, nights, mc):
     d = n["date"]
     log = load_json(DATA / "tonight_log.json", {}) or {}
     runs = log.setdefault(d, [])
-    runs.append({"t": iso(now), **tonight_answer(n)})
+    runs.append({"t": iso(now), **tonight_answer(n, now)})
     keep = sorted(log)[-3:]
     save_json(DATA / "tonight_log.json", {k: log[k] for k in keep}, compact=True)
 
