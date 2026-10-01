@@ -166,6 +166,9 @@ INJECT = r"""<script>
         cell.click();
         await sleep(100);
         check('basic hour strip explains an hour', /\d\d:\d\d/.test(document.querySelector('#b-why').textContent) && !/Tap an hour/.test(document.querySelector('#b-why').textContent));
+        cell.click();
+        await sleep(100);
+        check('basic hour strip: second tap clears the highlight', !cell.classList.contains('sel') && /Tap an hour/.test(document.querySelector('#b-why').textContent));
       }
       const card = b.querySelector('.bnc');
       if (card) {

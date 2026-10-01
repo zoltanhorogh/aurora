@@ -285,15 +285,27 @@
     if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip); }
     return tip;
   }
+  // Tap-to-explain cells: tapping the selected cell again clears the highlight and puts the hint back.
+  function tapSelect(cells, c, show, box, hint) {
+    const again = c.classList.contains('sel');
+    cells.forEach((x) => x.classList.toggle('sel', !again && x === c));
+    box.innerHTML = again ? `<span class="btap">${hint}</span>` : show();
+    return !again;
+  }
+
   function bindHover(container, W, bands, htmlFor, onBand) {
     const svg = container.querySelector('svg');
     const tip = tipBox(container);
-    const hide = () => { tip.style.display = 'none'; onBand && onBand(-1); };
+    let cur = -1; // band whose tooltip is showing
+    const hide = () => { tip.style.display = 'none'; cur = -1; onBand && onBand(-1); };
     const handler = (ev) => {
       const rect = svg.getBoundingClientRect();
       const x = ((ev.clientX - rect.left) / rect.width) * W;
       const i = bands.findIndex(([a, b]) => x >= a && x < b);
       if (i < 0) { hide(); return; }
+      // a second tap on the same band clears the highlight (touch; the mouse just hovers)
+      if (ev.type === 'pointerdown' && ev.pointerType !== 'mouse' && i === cur) { hide(); return; }
+      cur = i;
       onBand && onBand(i);
       tip.innerHTML = htmlFor(i);
       tip.style.display = 'block';
@@ -833,10 +845,10 @@
         <div class="bwhy" id="hp-why">${hpSel ? hpWhy(hpSel, byT.get(hpSel), need0) : '<span class="btap">👆 Tap a bar to see that half hour</span>'}</div>
         <div>now ${vl.toFixed(1)} · 24 h max ${max24.toFixed(1)} · needed here ≈${need0.toFixed(1)} ${vl >= need0 ? '✓ enough' : '✕ not enough'}${old}</div>
         <div class="why">last 12 hours, ship time · green = enough here · grey = below</div>`);
-      document.querySelectorAll('#lt-hp .hpc > div[data-t]').forEach((c) => c.addEventListener('click', () => {
-        hpSel = +c.dataset.t;
-        document.querySelectorAll('#lt-hp .hpc > div[data-t]').forEach((x) => x.classList.toggle('sel', x === c));
-        $('#hp-why').innerHTML = hpWhy(hpSel, byT.get(hpSel), need0);
+      const hpCells = document.querySelectorAll('#lt-hp .hpc > div[data-t]');
+      hpCells.forEach((c) => c.addEventListener('click', () => {
+        const on = tapSelect(hpCells, c, () => hpWhy(+c.dataset.t, byT.get(+c.dataset.t), need0), $('#hp-why'), '👆 Tap a bar to see that half hour');
+        hpSel = on ? +c.dataset.t : null;
       }));
       return;
     }
@@ -2191,10 +2203,8 @@
       <a href="#" class="badv" id="b-adv">Advanced view: all numbers, charts and explanations →</a>`;
     if (t) {
       const hrs = t.n.hourly.filter((h) => h.sun < -3);
-      el.querySelectorAll('.bstrip > div').forEach((c) => c.addEventListener('click', () => {
-        el.querySelectorAll('.bstrip > div').forEach((x) => x.classList.toggle('sel', x === c));
-        $('#b-why').innerHTML = basicWhy(hrs[+c.dataset.i], t.n);
-      }));
+      const cells = el.querySelectorAll('.bstrip > div');
+      cells.forEach((c) => c.addEventListener('click', () => tapSelect(cells, c, () => basicWhy(hrs[+c.dataset.i], t.n), $('#b-why'), '👆 Tap an hour to see why')));
     }
     el.querySelectorAll('.bnc').forEach((b) => b.addEventListener('click', () => setMode('advanced', () => {
       selected = b.dataset.date;
@@ -2206,10 +2216,8 @@
     const bh = $('#b-hourly');
     if (bh) bh.addEventListener('toggle', () => { if (bh.open) drawHourly(t.n, $('#b-chart')); });
     if (P && morning) {
-      el.querySelectorAll('#b-last .pstrip > div').forEach((c) => c.addEventListener('click', () => {
-        el.querySelectorAll('#b-last .pstrip > div').forEach((x) => x.classList.toggle('sel', x === c));
-        $('#b-lastwhy').innerHTML = P.why(+c.dataset.i);
-      }));
+      const cells = el.querySelectorAll('#b-last .pstrip > div');
+      cells.forEach((c) => c.addEventListener('click', () => tapSelect(cells, c, () => P.why(+c.dataset.i), $('#b-lastwhy'), '👆 Tap an hour to see what happened')));
     }
   }
 
