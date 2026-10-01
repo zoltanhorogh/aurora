@@ -144,6 +144,12 @@ INJECT = r"""<script>
         && (!!b.querySelector('.b-verdict') || /cruise is over|No forecast for tonight/.test(b.textContent)));
       if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf').length === 2);
       if (b.querySelector('#b-last')) check('basic last-night card has its two tiles', b.querySelectorAll('#b-last .bfx .bf').length === 2);
+      const lastCell = b.querySelector('#b-last .pstrip > div');
+      if (lastCell) {
+        lastCell.click();
+        await sleep(100);
+        check('basic last-night hour explains itself', /\d\d:00/.test(document.querySelector('#b-lastwhy').textContent));
+      }
       const cell = b.querySelector('.bstrip > div');
       if (cell) {
         cell.click();

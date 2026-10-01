@@ -135,6 +135,9 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .pstrip { display: grid; grid-template-columns: repeat(11, 1fr); gap: 4px; }
 .pstrip div { text-align: center; font-size: 11px; color: var(--muted); }
 .pstrip i { display: block; height: 22px; border-radius: 5px; margin-bottom: 3px; }
+.pstrip > div { cursor: pointer; border-radius: 6px; padding: 2px 0; }
+.pstrip > div.sel { outline: 2px solid var(--aurora); }
+.pstrip .bico { display: block; width: 14px; height: 14px; margin: 0 auto 2px; }
 .pstrip .a, .blegend .a { background: #1faa59; } .pstrip .cl, .blegend .cl { background: #6d8bbd; }
 .pstrip .c, .blegend .c { background: #3a3d44; } .pstrip .m, .blegend .m { background: #3a4a86; }
 .pstrip .na { background: #1c1d21; border: 1px dashed #3a3d44; }

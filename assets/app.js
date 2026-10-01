@@ -1758,10 +1758,13 @@
   }
 
   // Why an hour of the strip has its colour, in one line.
+  // Sun height below the horizon in plain words (the page counts an hour as dark from −12°)
+  const sunTxt = (a) => `sun ${Math.round(a)}° (${a > -6 ? 'twilight, still bright' : a > -12 ? 'twilight, getting dark' : a > -18 ? 'dark' : 'fully dark'})`;
+
   function basicWhy(h, n) {
     const head = `<b>${h.local}</b> · `;
-    const sun = `sun ${h.sun}°`;
-    if (!h.dark) return `${head}<span class="k t">twilight</span> ${sun} (dark below −12°): too bright for faint aurora`;
+    const sun = sunTxt(h.sun);
+    if (!h.dark) return `${head}<span class="k t">twilight</span> ${sun}: too bright for faint aurora`;
     if (h.cloud_met == null) {
       return new Date(h.t).getTime() + 3600e3 < Date.now() ? `${head}this hour is over and no forecast was kept for it`
         : `${head}not forecast yet: MET Norway's hourly forecast reaches this hour ${metFromText(n) ? `from ${metFromText(n)}` : 'in a later run'}`;
@@ -1928,13 +1931,42 @@
     // hour strips: the camera here and the nearest one that saw aurora
     const HOURS = ['19', '20', '21', '22', '23', '00', '01', '02', '03', '04', '05'];
     const cls = { aurora: 'a', 'possible aurora': 'a', clear: 'cl', cloudy: 'c', 'bright (moon)': 'm', mixed: 'c' };
-    const strip = (c, label) => `<div class="rowlab">${esc(label)}</div><div class="pstrip">${HOURS.map((h) => {
+    const metAt = {};
+    for (const r of (obs && obs.hours) || []) metAt[r[0].slice(0, 2)] = r[2];
+    const hourInfo = HOURS.map((hh) => {
+      const t = new Date(`${+hh >= 12 ? date : new Date(new Date(date + 'T12:00:00Z').getTime() + 864e5).toISOString().slice(0, 10)}T${hh}:00:00Z`).getTime() - OFFSET_H * 3600e3;
+      const hpv = (HP30 || []).filter(([ts]) => { const x = new Date(ts).getTime(); return x >= t && x < t + 3600e3; }).map((q) => q[1]);
+      let mag = null;
+      for (const st of Object.values((MAG && MAG.stations) || {})) {
+        if (!st.series || km(st.lat, st.lon) > 300) continue;
+        const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
+        st.series.dev.forEach((v, i) => { const x = s0 + i * step; if (v != null && x >= t && x < t + 3600e3 && (mag == null || v < mag)) mag = v; });
+      }
+      return { hh, sun: sunAltAt(new Date(t + 1800e3), lat, lon), cloud: metAt[hh] ?? null, hp: hpv.length ? Math.max(...hpv) : null, mag };
+    });
+    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%)` : `${esc(c.name)} camera: no picture`);
+    const why = (i, c) => {
+      const h = hourInfo[i];
+      const local = !c || c === here; // MET's analysis is for the place itself, not for a camera further away
+      const parts = [c ? camTxt(c, c.hrs[h.hh]) : '', local && h.cloud != null ? `MET analysis for ${esc(place)}: cloud ${Math.round(h.cloud)}%` : '',
+        h.hp != null ? `Hp30 ${h.hp.toFixed(1)}` : '', h.mag != null ? `magnetometer ${h.mag} nT` : '', sunTxt(h.sun)].filter(Boolean);
+      return `<b>${h.hh}:00</b> · ${parts.join(' · ')}`;
+    };
+    const icon = (i, c) => {
+      const h = hourInfo[i];
+      const v = c && c.hrs[h.hh];
+      const cl = h.cloud != null && (!c || c === here) ? Math.round(h.cloud) : v ? (camWord(v) === 'cloudy' ? 90 : camWord(v) === 'clear' || camWord(v).includes('aurora') ? 10 : null) : null;
+      return cl != null ? `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(cl)}</svg>` : '<span class="bico"></span>';
+    };
+    const strip = (c, label, row) => `<div class="rowlab">${esc(label)}</div><div class="pstrip" data-row="${row}">${HOURS.map((h, i) => {
       const v = c.hrs[h];
-      return `<div><i class="${v ? cls[camWord(v)] : 'na'}"></i>${h}</div>`;
+      return `<div data-i="${i}" role="button" tabindex="0">${icon(i, c)}<i class="${v ? cls[camWord(v)] : 'na'}"></i>${h}</div>`;
     }).join('')}</div>`;
-    const strips = [here ? strip(here, `${here.name} camera, hour by hour`) : '',
-      nearby[0] ? strip(nearby[0], `${nearby[0].name} camera (${Math.round(nearby[0].km / 10) * 10} km away)`) : ''].join('');
-    return { date, place, big, aur, sky: skyT, line, fc, alerts, strips, short: `${big[1]}${big[1] === 'Nothing missed' ? '' : ': ' + big[2]} · ${line}` };
+    const rows = [here, nearby[0]].filter(Boolean);
+    const strips = [here ? strip(here, `${here.name} camera, hour by hour`, 0) : '',
+      nearby[0] ? strip(nearby[0], `${nearby[0].name} camera (${Math.round(nearby[0].km / 10) * 10} km away)`, here ? 1 : 0) : ''].join('')
+      + (rows.length ? '<div class="bwhy" id="b-lastwhy"><span class="btap">👆 Tap an hour to see what happened</span></div>' : '');
+    return { date, place, big, aur, sky: skyT, line, fc, alerts, strips, why: (i, row) => why(i, rows[row]), short: `${big[1]}${big[1] === 'Nothing missed' ? '' : ': ' + big[2]} · ${line}` };
   }
 
   function prevNightCard(P) {
@@ -2025,6 +2057,12 @@
       scrollToY(yOf($('#night-detail')));
     })));
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
+    if (P && morning) {
+      el.querySelectorAll('#b-last .pstrip > div').forEach((c) => c.addEventListener('click', () => {
+        el.querySelectorAll('#b-last .pstrip > div').forEach((x) => x.classList.toggle('sel', x === c));
+        $('#b-lastwhy').innerHTML = P.why(+c.dataset.i, +c.parentElement.dataset.row);
+      }));
+    }
   }
 
   // ------------------------------------------------------------ boot
