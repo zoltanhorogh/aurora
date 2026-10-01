@@ -1663,15 +1663,23 @@
   const basicRefresh = () => { if (MODE === 'basic') safe(renderBasic); };
 
   // From 06:00 ship time "tonight" is the coming night: the cruise night on board, before the cruise Tromsø (practice).
+  // "Tonight" = the night in progress; once its darkness is over (about 04:45), the coming night.
   function basicTonight() {
+    const pick = (date) => {
+      const cruise = D.nights.find((n) => n.date === date);
+      if (cruise) return { n: cruise, practice: false };
+      const mc = D.model_check && D.model_check.nights.find((n) => n.date === date && n.spot === 'Tromsø');
+      return mc ? { n: mc, practice: true } : null;
+    };
     const s = shipDate(Date.now());
-    if (s.getUTCHours() < 6) s.setUTCDate(s.getUTCDate() - 1);
-    const date = s.toISOString().slice(0, 10);
-    const cruise = D.nights.find((n) => n.date === date);
-    if (cruise) return { n: cruise, practice: false };
-    const mc = D.model_check && D.model_check.nights.find((n) => n.date === date && n.spot === 'Tromsø');
-    return mc ? { n: mc, practice: true } : null;
+    if (s.getUTCHours() < 12) s.setUTCDate(s.getUTCDate() - 1);
+    const t = pick(s.toISOString().slice(0, 10));
+    const dark = t ? t.n.hourly.filter((h) => h.dark) : [];
+    if (t && dark.length && new Date(dark[dark.length - 1].t).getTime() + 3600e3 > Date.now()) return t;
+    s.setUTCDate(s.getUTCDate() + 1);
+    return pick(s.toISOString().slice(0, 10)) || t;
   }
+  const cloudRange = (a, b) => (a === b ? `${a}%` : `${a}–${b}%`);
 
   // Tonight's answer plus its two parts: is there aurora (activity) and can we see it (clouds).
   function basicVerdict(n) {
@@ -1687,7 +1695,7 @@
     }
     const hrs = n.hourly.filter((h) => h.dark && h.cloud_met != null);
     const clearH = hrs.filter((h) => h.cloud_met <= CLEAR_LINE).length;
-    const range = (hh) => { const c = hh.map((h) => Math.round(h.cloud_met)); return `${Math.min(...c)}–${Math.max(...c)}% cloud`; };
+    const range = (hh) => { const c = hh.map((h) => Math.round(h.cloud_met)); return `${cloudRange(Math.min(...c), Math.max(...c))} cloud`; };
     const win = bestWindow(n);
     let sky;
     if (win) {
@@ -1722,7 +1730,7 @@
     if (i < 0) return '';
     const was = runs[i], at = runs[i + 1].t;
     if (Date.now() - new Date(at) > 18 * 3600e3) return '';
-    const fmt = (r) => `${r.verdict === 'far' ? pct(r.score) + ' chance' : r.verdict}${r.window ? ' ' + r.window : ''}${r.cloud ? ` (${r.cloud[0]}–${r.cloud[1]}% cloud)` : ''}`;
+    const fmt = (r) => `${r.verdict === 'far' ? pct(r.score) + ' chance' : r.verdict}${r.window ? ' ' + r.window : ''}${r.cloud ? ` (${cloudRange(r.cloud[0], r.cloud[1])} cloud)` : ''}`;
     const why = was.cloud && now.cloud && (now.cloud[0] - was.cloud[0] >= 20 || was.cloud[0] - now.cloud[0] >= 20)
       ? (now.cloud[0] > was.cloud[0] ? ' The newest cloud forecast is cloudier.' : ' The newest cloud forecast is clearer.')
       : was.kp != null && now.kp != null && Math.abs(now.kp - was.kp) >= 1 ? ' The activity forecast changed.' : '';

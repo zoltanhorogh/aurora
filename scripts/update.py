@@ -731,12 +731,20 @@ def tonight_answer(n):
 
 
 def log_tonight(now, nights, mc):
+    # "Tonight" = the night in progress; once its darkness is over, the coming night (same rule as the page).
+    def pick(day):
+        d = day.isoformat()
+        return next((x for x in nights if x["date"] == d), None) \
+            or next((x for x in mc["nights"] if x["date"] == d and x.get("spot") == "Tromsø"), None)
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
-    d = (local - timedelta(days=1) if local.hour < 6 else local).date().isoformat()
-    n = next((x for x in nights if x["date"] == d), None) \
-        or next((x for x in mc["nights"] if x["date"] == d and x.get("spot") == "Tromsø"), None)
+    day = (local - timedelta(days=1) if local.hour < 12 else local).date()
+    n = pick(day)
+    dark = [h for h in n["hourly"] if h["dark"]] if n else []
+    if not dark or parse_utc(dark[-1]["t"]) + timedelta(hours=1) <= now:
+        n = pick(day + timedelta(days=1)) or n
     if not n:
         return
+    d = n["date"]
     log = load_json(DATA / "tonight_log.json", {}) or {}
     runs = log.setdefault(d, [])
     runs.append({"t": iso(now), **tonight_answer(n)})
