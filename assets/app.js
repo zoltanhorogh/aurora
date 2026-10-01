@@ -1727,13 +1727,14 @@
     const now = Date.now();
     const hrs = n.hourly.filter((h) => h.sun < -3);
     const cells = hrs.map((h, i) => {
-      const st = !h.dark ? 't' : h.cloud_met == null ? 'u' : ({ GO: 'g', TRY: 'y' }[hourStatus(h)[0]] || 'n');
+      const over = new Date(h.t).getTime() + 3600e3 < now;
+      const st = !h.dark ? 't' : h.cloud_met == null ? (over ? 'x' : 'u') : ({ GO: 'g', TRY: 'y' }[hourStatus(h)[0]] || 'n');
       const ico = h.cloud_met != null ? `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(Math.round(h.cloud_met))}</svg>` : '<span class="bico"></span>';
       return `<div class="${new Date(h.t).getTime() + 3600e3 < now ? 'past' : ''}" data-i="${i}" role="button" tabindex="0">${ico}<i class="${st}"></i>${h.local.slice(0, 2)}</div>`;
     }).join('');
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
       <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
-        hrs.some((h) => h.dark && h.cloud_met == null) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
+        hrs.some((h) => h.dark && h.cloud_met == null && new Date(h.t).getTime() + 3600e3 >= now) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
       ${USE_TIME_CURVE ? `<div class="bcurve" style="grid-template-columns:repeat(${hrs.length},1fr)">${hrs.map((h) => `<b style="height:${Math.round(auroraShare(h) * 30)}px"></b>`).join('')}</div>
       <div class="blegend"><span><b class="cv"></b>how often aurora is seen at that hour on clear nights (Kiruna, 10 years)</span></div>` : ''}
       <div class="blegend bsky"><span>Icons = clouds only:</span>${[[20, 'clear ≤40%'], [55, 'broken ≤70%'], [90, 'overcast']].map(([c, t]) =>
@@ -1746,7 +1747,10 @@
     const head = `<b>${h.local}</b> · `;
     const sun = `sun ${h.sun}°`;
     if (!h.dark) return `${head}<span class="k t">twilight</span> ${sun} (dark below −12°): too bright for faint aurora`;
-    if (h.cloud_met == null) return `${head}not forecast yet: MET Norway's hourly forecast reaches this hour ${metFromText(n) ? `from ${metFromText(n)}` : 'in a later run'}`;
+    if (h.cloud_met == null) {
+      return new Date(h.t).getTime() + 3600e3 < Date.now() ? `${head}this hour is over and no forecast was kept for it`
+        : `${head}not forecast yet: MET Norway's hourly forecast reaches this hour ${metFromText(n) ? `from ${metFromText(n)}` : 'in a later run'}`;
+    }
     const lab = hourStatus(h)[0];
     const cloud = `cloud ${Math.round(h.cloud_met)}%`;
     const act = `aurora chance ${pct(h.p_act)} (Kp forecast ${h.kp.toFixed(1)}, needed here ${h.kp_req.toFixed(1)})`;
@@ -1754,7 +1758,7 @@
       : lab === 'TRY' ? (h.cloud_met > CLEAR_LINE ? `${cloud}: more than 40% but ≤70%, gaps likely · ${act}` : `${cloud} (≤40%), but ${act} is only 25–50%`)
       : h.p_act < 0.25 ? `${act}: below 25%` : `${cloud}: more than 70%`;
     const word = { GO: ['g', 'go'], TRY: ['y', 'maybe'] }[lab] || ['n', 'no'];
-    return `${head}<span class="k ${word[0]}">${word[1]}</span> ${why} · ${sun}`;
+    return `${head}<span class="k ${word[0]}">${word[1]}</span> ${why} · ${sun}${h.cloud_past ? ' · this hour is over: last forecast made before it' : ''}`;
   }
 
   // Aurora now: the nearest fresh FMI magnetometer when there is one (up north), else Kp / Hp30 / OVATION.

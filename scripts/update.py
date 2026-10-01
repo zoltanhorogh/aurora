@@ -660,6 +660,31 @@ def update_cruise_log(now, nights, route):
     save_json(DATA / "cruise_log.json", log, compact=True)
 
 
+# ---------------------------------------------------------------- hours already over
+def carry_past_clouds(nights, mc, now):
+    """MET's forecast starts at the current hour, so tonight's hours that are already over lose their cloud
+    value at every run. Keep the last forecast made before each of them (from the previous latest.json),
+    so the night still shows the clouds it had instead of looking like "no data"."""
+    old = load_json(DATA / "latest.json", {}) or {}
+    prev = {("cruise", n["date"]): {h["t"]: h for h in n.get("hourly", [])} for n in old.get("nights", [])}
+    for n in (old.get("model_check") or {}).get("nights", []):
+        prev[(n.get("spot"), n["date"])] = {h["t"]: h for h in n.get("hourly", [])}
+
+    def fill(n, key):
+        hours = prev.get(key, {})
+        for h in n["hourly"]:
+            if h["cloud_met"] is None and parse_utc(h["t"]) < now:
+                o = hours.get(h["t"])
+                if o and o.get("cloud_met") is not None:
+                    h["cloud_met"] = o["cloud_met"]
+                    h["cloud_past"] = True
+
+    for n in nights:
+        fill(n, ("cruise", n["date"]))
+    for n in mc["nights"]:
+        fill(n, (n.get("spot"), n["date"]))
+
+
 # ---------------------------------------------------------------- tonight log
 # The basic view's answer for tonight (cruise night on board, Tromsø before the cruise) at every run,
 # so the page can say "changed at 15:30: was GO 21-23, now NO" and why (the clouds).
@@ -739,6 +764,7 @@ def main():
 
     nights = [score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
+    carry_past_clouds(nights, mc, now)
     met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
     update_cruise_log(now, nights, route)
