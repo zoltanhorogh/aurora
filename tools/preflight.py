@@ -112,7 +112,7 @@ INJECT = r"""<script>
     check('satellite panel rendered', /Clouds from space/.test((document.querySelector('#sat') || {}).textContent || ''));
     $$('details').forEach((d) => { d.open = true; });
     await sleep(400);
-    check('live tiles rendered', $$('#live-tiles .tile').length >= 7);
+    check('live tiles rendered', $$('#live-tiles .tile').length >= 6 && !/not available/.test(document.querySelector('#lt-hp .s').textContent));
     // Scrolling: every tab must land its section just under the header, the title must go to the very top
     const hdr = () => document.querySelector('.topbar').offsetHeight;
     const atBottom = () => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;

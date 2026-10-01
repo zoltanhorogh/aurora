@@ -806,6 +806,36 @@
 
   function updateHp30Tile() {
     if (!HP30 || !HP30.length) return setTile('lt-hp', '–', 'not available');
+    const need0 = liveNeed();
+    // every half hour we have, oldest first (fresh file + the week in latest.json)
+    const byT = new Map();
+    for (const [ts, v] of hp30All()) byT.set(new Date(ts).getTime(), v);
+    const pts = [...byT.entries()].sort((a, b) => a[0] - b[0]);
+    if (pts.length >= 2) {
+      const [tl, vl] = pts[pts.length - 1], vp = pts[pts.length - 2][1];
+      const arrow = vl - vp >= 0.3 ? ['↑', 'rising'] : vl - vp <= -0.3 ? ['↓', 'falling'] : ['→', 'steady'];
+      // last 12 hours as half-hour bars, green where it reached the level needed here
+      const bars = pts.filter(([t]) => t > tl - 12 * 3600e3);
+      const top = Math.max(3, need0 + 1, ...bars.map(([, v]) => v));
+      const bw = 240 / 24, yv = (v) => 46 - (v / top) * 42;
+      const svg = `<svg class="hpbars" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true">${bars.map(([t, v]) => {
+        const x = 240 - ((tl - t) / 1800e3 + 1) * bw;
+        return `<rect x="${(x + 1).toFixed(1)}" y="${yv(v).toFixed(1)}" width="${bw - 2}" height="${(46 - yv(v)).toFixed(1)}" rx="1.5" fill="${v >= need0 ? '#1faa59' : '#555a63'}"/>`;
+      }).join('')}<line x1="0" x2="240" y1="${yv(need0).toFixed(1)}" y2="${yv(need0).toFixed(1)}" stroke="#e8743b" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/></svg>`;
+      // this evening's story (from 16:00 ship time), like the magnetometer tile
+      const sd = shipDate(Date.now());
+      if (sd.getUTCHours() < 12) sd.setUTCDate(sd.getUTCDate() - 1);
+      const from = new Date(sd.toISOString().slice(0, 10) + 'T16:00:00Z').getTime() - OFFSET_H * 3600e3;
+      const eve = pts.filter(([t]) => t >= from);
+      const span = eve.length ? eve : pts.slice(-6);
+      const lo = span.reduce((b, p) => (p[1] < b[1] ? p : b)), hi = span.reduce((b, p) => (p[1] > b[1] ? p : b));
+      const story = [[lo, 'lowest'], [hi, 'highest']].sort((a, b) => a[0][0] - b[0][0]).map(([q, k]) => `${k} ${q[1].toFixed(1)} at ${hm(new Date(q[0]))}`).join(' → ');
+      const max24 = Math.max(...pts.filter(([t]) => t > tl - 24 * 3600e3).map(([, v]) => v));
+      const old = Date.now() - tl > 120 * 60e3 ? ' (old)' : '';
+      return setTile('lt-hp', `${vl.toFixed(1)} <span class="magarrow">${arrow[0]}</span> <span class="magword">${arrow[1]}</span>`,
+        `${svg}<div>${eve.length ? 'this evening' : 'last 3 h'}: ${story} → now ${vl.toFixed(1)} · 24 h max ${max24.toFixed(1)} · needed here ≈${need0.toFixed(1)} ${vl >= need0 ? '✓ enough' : '✕ not enough'}</div>
+        <div class="why">latest half hour ${hm(new Date(tl))}–${hm(new Date(tl + 1800e3))} ship time${old} · bars: last 12 h, green = enough here, orange dashes = needed here</div>`);
+    }
     const need = liveNeed();
     const [ts, v] = HP30[HP30.length - 1];
     const max24 = Math.max(...HP30.map((p) => p[1]));
@@ -872,12 +902,6 @@
 
   function refreshNoaaTiles() {
     const need = liveNeed();
-    getJSON(`${SWPC}/json/planetary_k_index_1m.json`).then((a) => {
-      const k = a[a.length - 1].estimated_kp;
-      setTile('lt-kp', k.toFixed(1), `needed here ≈${need.toFixed(1)} ${k >= need ? '✓ enough' : '✕ not enough'}`);
-      LIVE.kp = k;
-      basicRefresh();
-    }).catch(() => setTile('lt-kp', '–', 'offline'));
     getJSON(`${SWPC}/products/summary/solar-wind-mag-field.json`).then((a) => {
       const bz = a[0].bz_gsm;
       setTile('lt-bz', `${bz > 0 ? '+' : ''}${bz}<small> nT</small>`, bz <= -5 ? '✓ strongly south: door open' : bz < 0 ? 'slightly south' : '✕ north: door mostly closed');
@@ -947,7 +971,7 @@
     $('#live-tiles').innerHTML =
       (s.sailing ? `<div class="tile ship"><div class="k">Ship</div><div class="v">${esc(shortPlace(s.place))}</div><div class="s">${s.lat.toFixed(1)}°N ${s.lon.toFixed(1)}°E (from itinerary)</div></div>`
         : '<div class="tile ship"><div class="k">Practice spot</div><div class="v">Tromsø</div><div class="s">until the cruise starts, all live numbers are for Tromsø</div></div>') +
-      t('Kp now', '…', '', 'lt-kp') + t('Activity now (Hp30)', '…', '', 'lt-hp') + t('Magnetometer', '…', '', 'lt-mag') +
+      t('Activity now (Hp30)', '…', '', 'lt-hp').replace('class="tile"', 'class="tile wide"') + t('Magnetometer', '…', '', 'lt-mag') +
       t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
     refreshNoaaTiles();
     updateHp30Tile();
@@ -1696,7 +1720,7 @@
   // last night. Advanced = the full page. The choice is remembered on this device; Basic is the default.
   let MODE = 'basic';
   try { MODE = localStorage.getItem('aurora-mode') || 'basic'; } catch { /* private mode: stay basic */ }
-  const LIVE = {}; // live values the basic view reuses: Kp now, OVATION overhead, cloud drift
+  const LIVE = {}; // live values the basic view reuses: OVATION overhead, cloud drift
 
   function applyMode() {
     document.body.classList.toggle('basic-mode', MODE === 'basic');
@@ -1736,7 +1760,9 @@
     const act = n.factors.activity;
     const kp = n.activity.kp != null ? n.activity.kp.toFixed(1) : '?';
     const aur = act >= 0.5 ? { cls: 'ok', word: '✓ Active' } : act >= 0.25 ? { cls: 'mid', word: 'Borderline' } : { cls: 'bad', word: '✕ Too weak' };
-    aur.sub = `Kp ${kp} · ${n.kp_req <= 1 ? `${n.kp_req.toFixed(1)} is enough here` : `about ${n.kp_req.toFixed(0)} needed here`}`;
+    const kps = n.hourly.filter((h) => h.dark).map((h) => h.kp);
+    const lo = kps.length ? Math.min(...kps).toFixed(1) : kp, hi = kps.length ? Math.max(...kps).toFixed(1) : kp;
+    aur.sub = `Kp ${lo === hi ? lo : `${lo}–${hi}`} tonight · ${n.kp_req <= 1 ? `${n.kp_req.toFixed(1)} is enough here` : `about ${n.kp_req.toFixed(0)} needed here`}`;
     if (!metCovers(n)) {
       const p = n.clear.p;
       const sky = { cls: p >= 0.5 ? 'ok' : p >= 0.25 ? 'mid' : 'bad', word: `${pct(p)} clear chance`,
@@ -1879,8 +1905,8 @@
       return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm`];
     }
     const hp = HP30 && HP30.length ? HP30[HP30.length - 1][1] : null;
-    const lvl = Math.max(hp ?? -9, LIVE.kp ?? -9);
-    const txt = lvl > -9 ? `Kp/Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}` : 'live data loading…';
+    const lvl = hp ?? -9;
+    const txt = lvl > -9 ? `Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}` : 'live data loading…';
     if (lvl >= need + 1.5 || (LIVE.ov || 0) >= 20) return ['active', 'Active', txt];
     if (lvl >= need) return ['possible', 'Possible', txt];
     return ['quiet', 'Quiet', txt];
