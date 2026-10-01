@@ -804,6 +804,8 @@
   // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
   const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
 
+  let hpSel = null; // the half hour tapped in the Hp30 tile (kept across refreshes)
+  const hpWhy = (t, v, need) => `<b>${hm(new Date(t))}–${hm(new Date(t + 1800e3))}</b> · ${v == null ? 'no value' : `<span class="kp">Hp30 ${v.toFixed(1)} measured</span>${vsNeed([v], need)}`}`;
   function updateHp30Tile() {
     if (!HP30 || !HP30.length) return setTile('lt-hp', '–', 'not available');
     const need0 = liveNeed();
@@ -814,27 +816,29 @@
     if (pts.length >= 2) {
       const [tl, vl] = pts[pts.length - 1], vp = pts[pts.length - 2][1];
       const arrow = vl - vp >= 0.3 ? ['↑', 'rising'] : vl - vp <= -0.3 ? ['↓', 'falling'] : ['→', 'steady'];
-      // last 12 hours as half-hour bars, green where it reached the level needed here
-      const bars = pts.filter(([t]) => t > tl - 12 * 3600e3);
-      const top = Math.max(3, need0 + 1, ...bars.map(([, v]) => v));
-      const bw = 240 / 24, yv = (v) => 46 - (v / top) * 42;
-      const svg = `<svg class="hpbars" viewBox="0 0 240 48" preserveAspectRatio="none" aria-hidden="true">${bars.map(([t, v]) => {
-        const x = 240 - ((tl - t) / 1800e3 + 1) * bw;
-        return `<rect x="${(x + 1).toFixed(1)}" y="${yv(v).toFixed(1)}" width="${bw - 2}" height="${(46 - yv(v)).toFixed(1)}" rx="1.5" fill="${v >= need0 ? '#1faa59' : '#555a63'}"/>`;
-      }).join('')}<line x1="0" x2="240" y1="${yv(need0).toFixed(1)}" y2="${yv(need0).toFixed(1)}" stroke="#e8743b" stroke-dasharray="4 3" vector-effect="non-scaling-stroke"/></svg>`;
-      // this evening's story (from 16:00 ship time), like the magnetometer tile
-      const sd = shipDate(Date.now());
-      if (sd.getUTCHours() < 12) sd.setUTCDate(sd.getUTCDate() - 1);
-      const from = new Date(sd.toISOString().slice(0, 10) + 'T16:00:00Z').getTime() - OFFSET_H * 3600e3;
-      const eve = pts.filter(([t]) => t >= from);
-      const span = eve.length ? eve : pts.slice(-6);
-      const lo = span.reduce((b, p) => (p[1] < b[1] ? p : b)), hi = span.reduce((b, p) => (p[1] > b[1] ? p : b));
-      const story = [[lo, 'lowest'], [hi, 'highest']].sort((a, b) => a[0][0] - b[0][0]).map(([q, k]) => `${k} ${q[1].toFixed(1)} at ${hm(new Date(q[0]))}`).join(' → ');
+      // last 12 hours as 24 half-hour bars (hours on the axis), green where it reached the level needed here; tap a bar
+      const slots = Array.from({ length: 24 }, (_, k) => tl - (23 - k) * 1800e3);
+      const top = Math.max(3, need0 + 1, ...slots.map((t) => byT.get(t) ?? 0));
+      if (!slots.includes(hpSel)) hpSel = null;
+      const cells = slots.map((t) => {
+        const v = byT.get(t);
+        return `<div data-t="${t}" class="${t === hpSel ? 'sel' : ''}">${v == null ? '' : `<i class="${v >= need0 ? 'ok' : ''}" style="height:${Math.max(3, (v / top) * 100).toFixed(1)}%"></i>`}</div>`;
+      }).join('');
+      const axis = slots.map((t) => { const d = shipDate(t); return `<span>${d.getUTCMinutes() === 0 && d.getUTCHours() % 2 === 0 ? pad(d.getUTCHours()) : ''}</span>`; }).join('');
       const max24 = Math.max(...pts.filter(([t]) => t > tl - 24 * 3600e3).map(([, v]) => v));
-      const old = Date.now() - tl > 120 * 60e3 ? ' (old)' : '';
-      return setTile('lt-hp', `${vl.toFixed(1)} <span class="magarrow">${arrow[0]}</span> <span class="magword">${arrow[1]}</span>`,
-        `${svg}<div>${eve.length ? 'this evening' : 'last 3 h'}: ${story} → now ${vl.toFixed(1)} · 24 h max ${max24.toFixed(1)} · needed here ≈${need0.toFixed(1)} ${vl >= need0 ? '✓ enough' : '✕ not enough'}</div>
-        <div class="why">latest half hour ${hm(new Date(tl))}–${hm(new Date(tl + 1800e3))} ship time${old} · bars: last 12 h, green = enough here, orange dashes = needed here</div>`);
+      const old = Date.now() - tl > 120 * 60e3 ? ' · <b>old data</b>' : '';
+      setTile('lt-hp', `${vl.toFixed(1)} <span class="magarrow">${arrow[0]}</span> <span class="magword">${arrow[1]}</span>`,
+        `<div class="hpc">${cells}<div class="need" style="bottom:${((need0 / top) * 100).toFixed(1)}%"><span>${need0.toFixed(1)} needed here</span></div></div>
+        <div class="hpax">${axis}</div>
+        <div class="bwhy" id="hp-why">${hpSel ? hpWhy(hpSel, byT.get(hpSel), need0) : '<span class="btap">👆 Tap a bar to see that half hour</span>'}</div>
+        <div>now ${vl.toFixed(1)} · 24 h max ${max24.toFixed(1)} · needed here ≈${need0.toFixed(1)} ${vl >= need0 ? '✓ enough' : '✕ not enough'}${old}</div>
+        <div class="why">last 12 hours, ship time · green = enough here · grey = below</div>`);
+      document.querySelectorAll('#lt-hp .hpc > div[data-t]').forEach((c) => c.addEventListener('click', () => {
+        hpSel = +c.dataset.t;
+        document.querySelectorAll('#lt-hp .hpc > div[data-t]').forEach((x) => x.classList.toggle('sel', x === c));
+        $('#hp-why').innerHTML = hpWhy(hpSel, byT.get(hpSel), need0);
+      }));
+      return;
     }
     const need = liveNeed();
     const [ts, v] = HP30[HP30.length - 1];
