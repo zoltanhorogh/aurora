@@ -1,6 +1,7 @@
 """Forecast pipeline: pulls space-weather + cloud forecasts, scores every cruise night,
 writes data/latest.json and appends a snapshot to data/history.json."""
 import json
+import os
 import re
 import traceback
 from datetime import datetime, timedelta
@@ -19,6 +20,7 @@ MOON_PENALTY = 0.25          # full moon high in the sky washes out faint aurora
 RATINGS = [(0.40, "GOOD"), (0.25, "FAIR"), (0.10, "LOW"), (0.0, "POOR")]
 MAX_HISTORY_RUNS = 400
 MET_MAX_LEAD = 2.6           # days; MET Norway's hourly high-resolution part reaches ~60 h
+CRUISE_HOURLY = (10, 10, 24)  # month, first and last day of the extra hourly runs (update.yml cron "47 * 10-24 10 *")
 
 MONTHS = {m: i for i, m in enumerate(
     ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
@@ -201,10 +203,16 @@ def met_expected(nights, now):
         # covered once 80% of the dark hours are inside MET's hourly range (same rule as score_night)
         need = parse_utc(dark[max(0, -(-len(dark) * 8 // 10) - 1)]["t"])
         t = max(now, need - reach)
-        # forecast runs start at :17 every 3 h (UTC) and are published ~20 min later
+        # forecast runs start at :17 every 3 h (UTC), during the cruise also at :47 every hour (update.yml),
+        # and are published ~20 min later
         run = t.replace(minute=17, second=0, microsecond=0)
         while run < t or run.hour % 3:
             run += timedelta(hours=1)
+        hourly = t.replace(minute=47, second=0, microsecond=0)
+        if hourly < t:
+            hourly += timedelta(hours=1)
+        if hourly.month == CRUISE_HOURLY[0] and CRUISE_HOURLY[1] <= hourly.day <= CRUISE_HOURLY[2]:
+            run = min(run, hourly)
         n["clear"]["met_from"] = iso(run + timedelta(minutes=20))
 
 
@@ -331,7 +339,8 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
         key = (round(p["lat"], 2), round(p["lon"], 2))
         if key not in uniq:
             uniq.append(key)
-    ens = fetch_ensemble(uniq, d) if lead <= 34 and not ended else None
+    no_ens = os.environ.get("AURORA_NO_ENSEMBLE")  # tools/preflight.py --timeline only
+    ens = fetch_ensemble(uniq, d) if lead <= 34 and not ended and not no_ens else None
     met = [fetch_met(*p) or {} for p in uniq] if lead <= MET_MAX_LEAD and not ended else None
 
     rows = []
@@ -659,10 +668,11 @@ def update_cruise_log(now, nights, route):
             continue  # analysis not complete yet, try again next run
         dark = [r for r in rows if r[1] <= DARK_SUN]
         hp_dark = [r[3] for r in dark if r[3] is not None]
+        mid = route.at(datetime(d.year, d.month, d.day, 22, tzinfo=UTC))  # the place the page names for this night
         rec["observed"] = {
             "clear_dark": [r[0] for r in dark if r[2] <= CLEAR_MAX],
             "hp30_max_dark": max(hp_dark) if hp_dark else None,
-            "kp_needed": min(r[4] for r in dark) if dark else None,
+            "kp_needed": round(kp_required(mag_lat(mid["lat"], mid["lon"])), 1),  # not the lowest need on the route
             "hours": rows,
         }
     log["nights"] = {k: v for k, v in log["nights"].items() if len(v) > 1}
@@ -829,7 +839,7 @@ def main():
         "generated": iso(now),
         "ship_utc_offset": SHIP_UTC_OFFSET,
         "trip": {"ship": it["ship"], "title": it["title"], "start": iso(route.start), "end": iso(route.end),
-                 "cruise_day_from": iso(cruise_day_from(it)), "stops": it["stops"]},
+                 "cruise_day_from": iso(cruise_day_from(it)), "watch_nights": it.get("watch_nights", []), "stops": it["stops"]},
         "method": {
             "score": "activity × clear sky × darkness × moon & lights",
             "clear_definition": f"at least 2 consecutive dark hours with cloud cover ≤ {CLEAR_MAX}%",

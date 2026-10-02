@@ -2,8 +2,9 @@
 
 The Tromsø AI project (University of Electro-Communications, Japan) classifies the latest all-sky
 camera image every few minutes: aurora types (arc / discrete / diffuse, "aurora but cloudy",
-"aurora but bright"), clear, cloudy, dusk/dawn — each in %. Runs from the alert workflow every 10 min;
-writes at most one reading per site per UTC hour, and only when it is dark at the camera.
+"aurora but bright"), clear, cloudy, dusk/dawn — each in %. Runs from the alert workflow every 10 min
+and keeps, per site and hour, the most auroral of the pictures it checked (only when it is dark at the camera):
+one reading per hour missed both aurora spells over Tromsø on 1 Oct 2026 (22:50 and 01:30-02:10).
 Output: data/sky_obs.json  {night date (local evening): {site: {"HH": {...}}}}
 """
 from datetime import timedelta
@@ -47,11 +48,16 @@ def main():
         night = (local - timedelta(days=1) if local.hour < 12 else local).date().isoformat()
         hour = local.strftime("%H")
         slot = log["nights"].setdefault(night, {}).setdefault(site, {})
-        if hour in slot:
-            continue  # one reading per hour is enough
-        slot[hour] = {**s, "t": iso(t)}
+        old = slot.get(hour)
+        if old and old.get("last") == iso(t):
+            continue  # the same picture as at the last check
+        n = (old or {}).get("n", 1 if old else 0) + 1
+        if old and (old["aurora"], old.get("bright", 0)) >= (s["aurora"], s["bright"]):
+            old.update(n=n, last=iso(t))  # keep the more auroral picture of this hour
+        else:
+            slot[hour] = {**s, "t": iso(t), "n": n, "last": iso(t)}
         changed = True
-        print(site, night, hour, s)
+        print(site, night, hour, s, "checks", n)
     if changed:
         nights = sorted(log["nights"])[-KEEP_NIGHTS:]
         log["nights"] = {k: log["nights"][k] for k in nights}

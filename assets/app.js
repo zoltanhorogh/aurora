@@ -5,7 +5,7 @@
   const SERIES = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300'];
   const RATING = { GOOD: ['good', '▲'], FAIR: ['warn', '◆'], LOW: ['serious', '▼'], POOR: ['critical', '✕'] };
   const RATING_HEX = { GOOD: '#0ca30c', FAIR: '#fab219', LOW: '#ec835a', POOR: '#d03b3b' };
-  const KEY_NIGHTS = ['2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18'];
+  let KEY_NIGHTS = ['2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16', '2026-10-17', '2026-10-18']; // the Arctic nights; from latest.json once loaded
   const SWPC = 'https://services.swpc.noaa.gov';
   const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -116,17 +116,18 @@
     const now = Date.now();
     const start = new Date(D.trip.start).getTime();
     const end = new Date(D.trip.end).getTime();
-    // Fixed phase starts (UTC), each tied to when a forecast reaches the nights that matter
+    // Phase starts, each tied to when a forecast reaches the nights that matter (from the trip, not fixed dates)
+    const before = (date, days) => new Date(new Date(date + 'T16:00:00Z').getTime() - days * 864e5).toISOString();
     const steps = [
       ['Trend', '27-day outlook + climate', null],
-      ['Early weather', 'ensemble clouds gain weight', '2026-09-27T16:00:00Z'], // global models reach the first Arctic night (16 days)
-      ['Sharpening', 'cloud forecasts become useful', '2026-10-04T16:00:00Z'], // MET's 9-day forecast reaches Tromsø and Alta
-      ['Final days', 'NOAA 3-day Kp, CME models', '2026-10-07T15:00:00Z'], // the 3 days before departure
+      ['Early weather', 'ensemble clouds gain weight', before(KEY_NIGHTS[0], 16)], // global models reach the first Arctic night (16 days)
+      ['Sharpening', 'cloud forecasts become useful', before(KEY_NIGHTS[0], 9)], // MET's 9-day forecast reaches Tromsø and Alta
+      ['Final days', 'NOAA 3-day Kp, CME models', new Date(start - 3 * 864e5).toISOString()], // the 3 days before departure
       ['On board', 'live nowcast + alerts', D.trip.start],
     ];
     const idx = now > end ? 5 : steps.reduce((k, s, i) => (s[2] && now >= new Date(s[2]).getTime() ? i : k), 0);
     const when = (i) => (i === 0 ? `until ${shortDay(shipDate(steps[1][2]).toISOString().slice(0, 10))}`
-      : `from ${shortDay(shipDate(steps[i][2]).toISOString().slice(0, 10))}${i === 4 ? ` ${hm(steps[i][2])}` : ''}`);
+      : `from ${shortDay(shipDate(steps[i][2]).toISOString().slice(0, 10))}${i === 4 ? ` ${hm(steps[i][2])} ship time` : ''}`);
     const meaning = [
       'Right now only the <b>general trend</b> is known: the Sun\'s 27-day rhythm and how cloudy October usually is. Treat the percentages as typical odds, not a forecast.',
       'Weather models start to reach the cruise, but at this range they are only a little better than climate. Watch the <b>trend chart</b>: consistent moves matter more than single values.',
@@ -140,7 +141,8 @@
       const d = Math.floor((start - now) / 864e5), h = Math.floor(((start - now) % 864e5) / 3600e3);
       big = `T–${d} d ${h} h <span class="hint" style="font-size:14px;font-weight:400">to departure</span>`;
     } else if (now <= end) {
-      big = `Day ${Math.floor((now - start) / 864e5) + 1} <span class="hint" style="font-size:14px;font-weight:400">of 14 · ${esc(shortPlace(shipNow().place))}</span>`;
+      const day = (t) => new Date(shipDate(t).toISOString().slice(0, 10)).getTime(); // calendar day, ship time
+      big = `Day ${Math.round((day(now) - day(start)) / 864e5) + 1} <span class="hint" style="font-size:14px;font-weight:400">of ${Math.round((day(end) - day(start)) / 864e5) + 1} · ${esc(shortPlace(shipNow().place))}</span>`;
     } else big = 'Welcome home';
     $('#phase').innerHTML = `
       <div class="phase-head"><div class="countdown">${big}</div></div>
@@ -261,7 +263,7 @@
       <div class="pastres ${/^Aurora on|^Possible/.test(L.headline) ? 'ok' : 'why'}" style="margin:4px 0 8px">${esc(L.headline)}</div>
       ${row('Cameras', cams)}${row('Magnetometers', mag)}${row('Activity', L.hp30 ? `Hp30 max ${L.hp30.max.toFixed(1)} at ${L.hp30.at}` : '')}
       ${row('Clouds (MET)', clouds)}${row('Alerts sent', alerts)}
-      <p class="hint" style="margin:6px 0 0">Cameras: all-sky camera AI, checked hourly · magnetometers: lowest point vs quiet level (−50 active, −200 strong) · clouds: MET Norway's analysis afterwards.</p>`;
+      <p class="hint" style="margin:6px 0 0">Cameras: all-sky camera AI, checked every 10 minutes (the most auroral picture of each hour) · magnetometers: lowest point vs quiet level (−50 active, −200 strong) · clouds: MET Norway's analysis afterwards.</p>`;
   }
 
   function renderCards() {
@@ -375,6 +377,7 @@
   const CLOUD_SVG = 'M4.2 13.5h7.6a3 3 0 0 0 .3-6 4.2 4.2 0 0 0-8 1.1 2.5 2.5 0 0 0 .1 4.9z';
   const MOON_SVG = 'M9.5 1.8a6 6 0 1 0 4.7 9.4A5 5 0 0 1 9.5 1.8z';
   // Moon / moon with cloud / cloud: the same small sky icons in the hour table and in the basic hour strip
+  const UNKNOWN_GLYPH = '<text x="8" y="12.5" text-anchor="middle" font-size="12" font-weight="700" fill="#8f96a3">?</text>'; // clouds not known
   const skyGlyph = (c) => (c <= CLEAR_LINE ? `<path d="${MOON_SVG}" fill="#dfe6ff"/>`
     : c <= 70 ? `<path d="${MOON_SVG}" fill="#dfe6ff" transform="translate(3 -1) scale(.75)"/><path d="${CLOUD_SVG}" fill="#b4bac4"/>`
     : `<path d="${CLOUD_SVG}" fill="#8f96a3"/>`);
@@ -442,7 +445,12 @@
   // in the evening twilight does not count.
   const metCovers = (n) => n.clear.source.startsWith('MET Norway');
   const metFull = (n) => n.clear.source === 'MET Norway'; // "MET Norway (partial)": only the first hours, with a clear gap
-  const metFromText = (n) => (n.clear.met_from ? `${dayLabel(shipDate(n.clear.met_from).toISOString().slice(0, 10))} ≈${hm(n.clear.met_from)}` : null);
+  // when MET's hourly forecast reaches a night, rounded up to the full hour (the robot's runs are not to the minute)
+  const metFromText = (n) => {
+    if (!n.clear.met_from) return null;
+    const t = Math.ceil(new Date(n.clear.met_from).getTime() / 3600e3) * 3600e3;
+    return `${dayLabel(shipDate(t).toISOString().slice(0, 10))} around ${hm(t)}`;
+  };
 
   // Far nights: no hourly verdicts, just the two numbers that actually mean something that far out.
   function farSummary(n) {
@@ -621,7 +629,7 @@
     bindHover(cont, W, bands, (i) => {
       const h = hours[i];
       return `<b>${h.local}</b> · ${esc(shortPlace(h.place))}
-        <div class="row"><span>Sun</span><span>${h.sun}° ${h.dark ? '(dark)' : '(twilight/day)'}</span></div>
+        <div class="row"><span>Sky</span><span>${h.dark ? 'dark' : h.sun < -3 ? 'twilight' : 'daylight'}</span></div>
         ${h.cloud_met != null ? `<div class="row"><span>Cloud (MET Norway)</span><span>${h.cloud_met}%</span></div>` : ''}
         <div class="row"><span>Verdict</span><span>${hourStatus(h)[0]} ${hourStatus(h)[2]}</span></div>
         <div class="row"><span>Kp forecast</span><span>${h.kp.toFixed(1)}</span></div>
@@ -710,7 +718,7 @@
       <h3>27-day Kp outlook</h3>
       <div class="legend"><span><i style="background:#3987e5"></i>NOAA outlook (daily max Kp)</span><span><i class="dotm" style="background:#d95926"></i>Observed</span><span><i class="dotm" style="border:2px solid #199e70;background:none"></i>What happened 27 days earlier</span></div>
       <div class="chart" id="kp27-chart"></div>
-      <div class="hint">Issued ${esc(sw.kp_27day.issued || '–')} (new issue every Monday). The purple band marks the Arctic nights (13–18 Oct).</div>`;
+      <div class="hint">Issued ${esc(sw.kp_27day.issued || '–')} (new issue every Monday). The purple band marks the Arctic nights (${shortDay(KEY_NIGHTS[0])}–${shortDay(KEY_NIGHTS[KEY_NIGHTS.length - 1])}).</div>`;
     drawKp27();
   }
 
@@ -720,7 +728,7 @@
     const cont = $('#kp27-chart');
     const obs = Object.fromEntries(sw.observed_daily.map((o) => [o.date, o.kp_max]));
     const first = new Date(days[0].date + 'T00:00:00Z');
-    const last = new Date(Math.max(new Date(days[days.length - 1].date + 'T00:00:00Z'), new Date('2026-10-24T00:00:00Z')));
+    const last = new Date(Math.max(new Date(days[days.length - 1].date + 'T00:00:00Z'), new Date(shipDate(D.trip.end).toISOString().slice(0, 10) + 'T00:00:00Z')));
     const all = [];
     for (let t = first.getTime(); t <= last.getTime(); t += 864e5) all.push(new Date(t).toISOString().slice(0, 10));
     const out = Object.fromEntries(days.map((d) => [d.date, d.kp]));
@@ -736,7 +744,7 @@
       return `<rect x="${ml + i0 * bw}" y="${mt}" width="${(i1 - i0 + 1) * bw}" height="${ph}" fill="${fill}"/>` +
         (lab ? `<text x="${ml + i0 * bw + 4}" y="${mt - 4}" class="lbl">${lab}</text>` : '');
     };
-    let g = band('2026-10-10', '2026-10-23', '#1d1f24', 'Cruise') + band('2026-10-13', '2026-10-18', '#2a2342', '');
+    let g = band(D.nights[0].date, D.nights[D.nights.length - 1].date, '#1d1f24', 'Cruise') + band(KEY_NIGHTS[0], KEY_NIGHTS[KEY_NIGHTS.length - 1], '#2a2342', '');
     g += gridY(y, ml, ml + pw, [0, 1, 2, 3, 4, 5, 6, 7], (v) => v);
     g += '<g class="hl"></g>';
     all.forEach((d, i) => {
@@ -825,7 +833,7 @@
       <p><b>NOAA weekly forecast</b> (${esc(w.period || '')}, issued ${esc(w.issued || '–')}):<br>${esc(w.geomagnetic || 'not available')}</p>
       <p class="hint">Jargon: "CH HSS" = fast solar wind from a coronal hole, the typical source of moderate aurora activity at this stage of the solar cycle. "Unsettled/active" ≈ Kp 3–4, "G1" = Kp 5.</p>
       <p><b>Solar eruptions (CMEs) heading to Earth:</b> ${cmes.length ? '' : cmeDown ? 'not known right now: NASA\'s CME model service did not answer at the last update, so the forecast runs without it.' : 'none in NASA\'s model runs from the last 7 days.'}</p>
-      ${cmes.length ? `<ul>${cmes.map((c) => `<li>Arrival ≈ ${esc(dayLabel(c.arrival.slice(0, 10)))} ${hm(c.arrival)} ship time${c.glancing ? ' (glancing blow)' : ''} · expected Kp ${c.kp_min ?? '?'}–${c.kp_max ?? '?'} ${c.link ? `· <a href="${esc(c.link)}" target="_blank" rel="noopener">details</a>` : ''}</li>`).join('')}</ul>` : ''}`;
+      ${cmes.length ? `<ul>${cmes.map((c) => `<li>Arrival ≈ ${esc(dayLabel(shipDate(c.arrival).toISOString().slice(0, 10)))} ${hm(c.arrival)} ship time${c.glancing ? ' (glancing blow)' : ''} · expected Kp ${c.kp_min ?? '?'}–${c.kp_max ?? '?'} ${c.link ? `· <a href="${esc(c.link)}" target="_blank" rel="noopener">details</a>` : ''}</li>`).join('')}</ul>` : ''}`;
   }
 
   // ------------------------------------------------------------ live
@@ -890,13 +898,39 @@
   // Nearest FMI magnetometer to the ship (Tromsø area before the cruise). None near the southern ports.
   // A station's story this evening (from 16:00 ship time; after midnight: since 16:00 the day before):
   // value now vs the quiet level, its 10-minute trend, the highest rise and the deepest dip with their times.
-  function magStory(st) {
-    if (!st || !st.series) return null;
+  const eveningFrom = () => {
     const sd = shipDate(Date.now());
     if (sd.getUTCHours() < 12) sd.setUTCDate(sd.getUTCDate() - 1);
-    const from = new Date(sd.toISOString().slice(0, 10) + 'T16:00:00Z').getTime() - OFFSET_H * 3600e3;
-    const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3;
-    const pts = st.series.dev.map((v, i) => [s0 + i * step, v]).filter(([, v]) => v != null);
+    return new Date(sd.toISOString().slice(0, 10) + 'T16:00:00Z').getTime() - OFFSET_H * 3600e3;
+  };
+  const magPts = (st) => {
+    const s0 = new Date(st.series.t0).getTime(), step = st.series.step_min * 60e3, now = Date.now();
+    return st.series.dev.map((v, i) => [s0 + i * step, v]).filter(([t, v]) => v != null && t <= now);
+  };
+  // the change over the 10 minutes ending at point i of a 1-minute series
+  const d10At = (pts, i) => { let j = i; while (j > 0 && pts[j - 1][0] >= pts[i][0] - 600e3) j--; return pts[i][1] - pts[j][1]; };
+  // Substorm moments since `from` at the nearby stations: one of them at -50 nT or lower, or a 10-minute change of
+  // 50 nT or more either way (on 1 Oct 2026 the substorm started with a +83 nT jump at Kilpisjärvi; Masi went to -90).
+  const MAG_JUMP = 50;
+  const SLOW_RISE = 30; // nT per 10 min: a faster rise is part of a substorm, not "charging" (tuned on 29 Sep-1 Oct 2026)
+  function substormTimes(list, from) {
+    const ev = [];
+    for (const pts of list) pts.forEach(([t, v], i) => { if (t >= from && (v <= -MAG_JUMP || Math.abs(d10At(pts, i)) >= MAG_JUMP)) ev.push(t); });
+    return ev.sort((a, b) => a - b);
+  }
+  // Hp30 now: the higher of the last two published half hours (one hour: no flicker around the need), or null when
+  // the newest is older than 2 hours. A half hour is published about 30 minutes after it starts.
+  function hp30Now() {
+    const now = Date.now();
+    const pub = hp30All().map(([ts, v]) => [new Date(ts).getTime(), v]).filter(([t]) => t + 1800e3 <= now).sort((a, b) => a[0] - b[0]);
+    if (!pub.length || now - pub[pub.length - 1][0] > 120 * 60e3) return null;
+    return Math.max(...pub.slice(-2).map((p) => p[1]));
+  }
+
+  function magStory(st) {
+    if (!st || !st.series) return null;
+    const from = eveningFrom();
+    const pts = magPts(st);
     if (!pts.length) return null;
     const [tNow, now] = pts[pts.length - 1];
     const ago = pts.filter(([t]) => t <= tNow - 10 * 60e3).pop();
@@ -933,13 +967,18 @@
     if (!m) return setTile('lt-mag', `${best.swing_60}<small> nT</small>`, `swing in the last hour · ${where}`);
     // + = field pushed up (energy building), − = dip (substorm, aurora moving); arrow = last 10 minutes
     const arrow = m.d10 >= 5 ? '↑' : m.d10 <= -5 ? '↓' : '→';
-    const word = m.now <= -50 || best.change_10 <= -50 ? 'substorm' : m.d10 >= 5 ? 'rising' : m.d10 <= -5 ? 'falling' : Math.abs(m.now) < 20 ? 'calm' : 'steady';
+    // the same substorm rule as the basic "Aurora now" (any nearby station, the last half hour): a 1-2 minute spike
+    // between two 10-minute looks is still a substorm (Kilpisjärvi +83 nT at 22:49 on 1 Oct 2026, back to -2 at 22:51)
+    const near = Object.values(st).filter((x) => x.series && km(x) <= 300).map(magPts).filter((p) => p.length);
+    const recentSub = substormTimes(near, Date.now() - 1800e3).length > 0;
+    const word = m.now <= -50 || best.change_10 <= -50 || Math.abs(m.d10) >= MAG_JUMP || recentSub ? 'substorm'
+      : m.d10 >= 5 ? 'rising' : m.d10 <= -5 ? 'falling' : Math.abs(m.now) < 20 ? 'calm' : 'steady';
     const strong = m.now <= -200 || best.swing_60 >= 200 ? ' · <span class="ok">strong: go outside if clear</span>' : '';
     const when = m.evening ? 'this evening' : 'last 3 h';
     setTile('lt-mag', `${nT(m.now)}<small> nT</small> <span class="magarrow">${arrow}</span> <span class="magword ${word}">${word}</span>`,
       `${magSpark(m.pts)}<div>${when}: ${[[m.low, 'lowest'], [m.peak, 'peak']].sort((x, y) => x[0][0] - y[0][0])
         .map(([q, k]) => `${k} ${nT(q[1])} at ${hm(new Date(q[0]))}`).join(' → ')} → now ${nT(m.now)}${strong}</div>
-      <div class="why">vs the quiet level · ${where}</div>`);
+      <div class="why">${word === 'calm' ? 'calm field: no substorm now, quiet arcs still possible · ' : ''}vs the quiet level · ${where}</div>`);
   }
 
   function refreshNoaaTiles() {
@@ -1135,6 +1174,15 @@
 
   // ------------------------------------------------------------ all-sky cameras (ground truth, live)
   const AI_BASE = 'https://tromsoe-ai.cei.uec.ac.jp/~nanjo/public/aurora_alert/';
+  // Tromsø AI keograms: the last night's until the camera starts again in the evening, older nights from the archive
+  const KEO_DIR = { tromso: ['archives', ''], skibotn: ['archives_skibotn', '_skibotn'], kiruna: ['archives_kiruna', '_kiruna'] };
+  function keogramUrl(id, date) {
+    const [dir, suffix] = KEO_DIR[id];
+    const s = shipDate(Date.now());
+    const yesterday = new Date(s.getTime() - 864e5).toISOString().slice(0, 10);
+    if (date === yesterday && s.getUTCHours() < 16) return `${AI_BASE}latest_keo${suffix}.png`;
+    return `${AI_BASE}${dir}/${date.slice(0, 4)}_season/keo/keo_${date.replace(/-/g, '')}.png`;
+  }
   const AI_AURORA = ['Arc', 'Discrete', 'Diffuse', 'Aurora but cloudy', 'Aurora but bright'];
   // What the camera AI sees, in plain words. `a` = its percentages.
   // Sun altitude in degrees (low-precision solar position): tells real twilight from a moonlit sky.
@@ -1152,14 +1200,14 @@
     const aurora = AI_AURORA.reduce((s, k) => s + (a[k] || 0), 0);
     const type = AI_AURORA.reduce((b, k) => ((a[k] || 0) > (a[b] || 0) ? k : b), AI_AURORA[0]);
     const bright = a['Aurora but bright'] || 0;
+    // the same thresholds as the hourly night log (camWord), so "now" and "last night" never disagree
     if (aurora >= 50) return ['good', `Aurora now (${type.toLowerCase()})`, aurora];
-    if ((a['Dusk/Dawn'] || 0) >= 50 && sunAlt != null && sunAlt < -10) {
-      return ['moon', bright >= 10 ? `Possible aurora (${Math.round(bright)}%), bright sky` : 'Bright sky (moonlight)', aurora];
-    }
+    if (bright >= 30) return ['moon', `Possible aurora (${Math.round(bright)}%), bright sky`, aurora];
+    if ((a['Dusk/Dawn'] || 0) >= 50 && sunAlt != null && sunAlt < -10) return ['moon', 'Bright sky (moonlight)', aurora];
     if ((a['Dusk/Dawn'] || 0) >= 50) return ['day', 'Daylight / twilight', aurora];
-    if ((a.Cloudy || 0) >= 50) return ['cloud', 'Cloudy', aurora];
     if ((a.Clear || 0) >= 50) return ['clear', 'Clear sky, no aurora', aurora];
-    return ['mixed', aurora >= 25 ? `Possible aurora (${Math.round(aurora)}%), mixed sky` : 'Mixed / uncertain', aurora];
+    if ((a.Cloudy || 0) >= 50) return ['cloud', 'Cloudy', aurora];
+    return ['mixed', 'Mixed / uncertain', aurora];
   }
 
   const AI_SITES = [['tromso', 'Tromsø', 'Data.json', 69.65, 18.96], ['skibotn', 'Skibotn (between Tromsø and Alta)', 'Data_skibotn.json', 69.35, 20.36],
@@ -1502,7 +1550,7 @@
         <tr><th>Night</th><th>Spot</th><th style="text-align:left">Forecast (✓ = clouds right)</th><th>Actually clear (dark)</th><th>Camera saw</th><th>Hp30 max</th></tr>
         ${recs.map(row).join('')}
       </table></div>
-      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Camera saw = what the all-sky camera AI saw that night, checked once an hour (from 28 Sep on): the real ground truth. Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
+      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Camera saw = what the all-sky camera AI saw that night (from 28 Sep on; checked every 10 minutes since 2 Oct, once an hour before): the real ground truth. Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
   }
 
   // ------------------------------------------------------------ model check (next 3 nights in Tromsø and Alta)
@@ -1557,6 +1605,7 @@
   // Local time: England UTC+1, Norway UTC+2 (both summer time until 25 Oct).
   const tzOff = (lat) => (lat < 55 ? 1 : 2);
   const localHm = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); };
+  const tzName = (lat) => (tzOff(lat) === 1 ? ' UK time' : ' ship time');
   const localDay = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return `${DOW[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
   const inTime = (t) => {
     const m = Math.round((new Date(t) - Date.now()) / 60000);
@@ -1574,16 +1623,16 @@
     let html;
     if (now < start) {
       const s = stops[0];
-      html = `<b>Not sailing yet.</b> Departure from ${esc(s.name)} ${localDay(s.depart, s.lat)} ${localHm(s.depart, s.lat)} (${inTime(s.depart)}).`;
+      html = `<b>Not sailing yet.</b> Departure from ${esc(s.name)} ${localDay(s.depart, s.lat)} ${localHm(s.depart, s.lat)}${tzName(s.lat)} (${inTime(s.depart)}).`;
     } else if (now > end) {
       html = '<b>Cruise completed.</b> Welcome home!';
     } else {
       const port = stops.find((s) => s.arrive && s.depart && now >= new Date(s.arrive) && now <= new Date(s.depart));
       if (port) {
-        html = `<b>Now: in ${esc(port.name)}.</b> Departs ${localDay(port.depart, port.lat)} ${localHm(port.depart, port.lat)} (${inTime(port.depart)}).`;
+        html = `<b>Now: in ${esc(port.name)}.</b> Departs ${localDay(port.depart, port.lat)} ${localHm(port.depart, port.lat)}${tzName(port.lat)} (${inTime(port.depart)}).`;
       } else {
         const next = stops.find((s) => s.arrive && new Date(s.arrive) > now);
-        html = next ? `<b>Now: at sea</b> → ${esc(next.name)}, arriving ${localDay(next.arrive, next.lat)} ${localHm(next.arrive, next.lat)} (${inTime(next.arrive)}).` : '<b>Now: at sea.</b>';
+        html = next ? `<b>Now: at sea</b> → ${esc(next.name)}, arriving ${localDay(next.arrive, next.lat)} ${localHm(next.arrive, next.lat)}${tzName(next.lat)} (${inTime(next.arrive)}).` : '<b>Now: at sea.</b>';
       }
     }
     el.innerHTML = `<span class="dot"></span>${html} <span class="why">From the published schedule, not live tracking.</span>`;
@@ -1943,40 +1992,52 @@
     return `${head}<span class="k ${word[0]}">${word[1]}</span> ${why}${meas}${h.cloud_past ? ' · this hour is over: last forecast made before it' : ''}`;
   }
 
-  // Aurora now: the nearest fresh FMI magnetometer when there is one (up north), else Kp / Hp30 / OVATION.
+  // Aurora now, from the nearby FMI magnetometers when there are any (up north), else Hp30 and the NOAA model.
+  // Never "quiet": a calm field only means no substorm right now; quiet arcs are common at these latitudes, so a calm
+  // field is "Possible" when the measured activity (Hp30, last hour) is enough for this place, else "Low".
   function basicAuroraNow() {
     const [lat, lon] = herePos();
     const need = kpNeedAt(lat, lon);
     if (sunAltAt(new Date(), lat, lon) > -6) return ['day', 'Daylight', 'too bright to see aurora now; check again after dark'];
+    const hp = hp30Now();
+    const hpTxt = hp != null ? `Hp30 ${hp.toFixed(1)}, ${need.toFixed(1)} needed here` : 'no fresh Hp30';
     const R = Math.PI / 180;
     const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
-    const st = Object.values((MAG && MAG.stations) || {})
-      .filter((x) => km(x) <= 300 && Date.now() - new Date(x.t) < 40 * 60e3).sort((a, b) => km(a) - km(b))[0];
-    if (st) {
-      const dev = st.series ? st.series.dev.filter((v) => v != null) : [];
-      const last = dev.length ? dev[dev.length - 1] : 0;
-      const low = dev.length ? Math.min(...dev.slice(-30)) : 0;
-      if (low <= -200 || st.swing_60 >= 200) return ['strong', 'Strong', `magnetometer ${esc(st.name)} ${low} nT: big display overhead`];
-      if (low <= -50 || st.change_10 <= -50) return ['active', 'Active', `magnetometer ${esc(st.name)} ${low} nT: aurora moving now`];
-      // This evening: the highest rise above the quiet level, and whether a substorm dip came after it
-      const m = magStory(st);
-      if (m && m.evening && m.peak[1] >= 40) {
-        const dipAfter = m.pts.some(([t, v]) => t >= m.peak[0] && v <= -50);
-        if (!dipAfter) return ['charging', 'Charging ↑', `magnetometer rose to ${nT(m.peak[1])} nT at ${hm(new Date(m.peak[0]))} (now ${nT(last)}): a substorm is likely later tonight`];
-        return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm again after tonight's substorm; another one can follow`];
+    const near = Object.values((MAG && MAG.stations) || {})
+      .filter((x) => x.series && km(x) <= 300 && Date.now() - new Date(x.t) < 40 * 60e3).sort((a, b) => km(a) - km(b));
+    const list = near.map(magPts).filter((p) => p.length);
+    if (list.length) {
+      const now = Date.now();
+      const low = Math.min(...list.map((p) => Math.min(...p.filter(([t]) => t > now - 1800e3).map((q) => q[1]), 0)));
+      if (low <= -200 || near.some((s) => s.swing_60 >= 200)) return ['strong', 'Strong', `magnetometer ${nT(low)} nT: big display overhead`];
+      const ev = substormTimes(list, eveningFrom());
+      const recent = ev.filter((t) => t > now - 1800e3);
+      if (recent.length) return ['active', 'Active', `substorm on the magnetometer at ${hm(new Date(recent[recent.length - 1]))}: aurora moving now`];
+      // charging: a slow rise of the nearest station since tonight's last substorm (or since 16:00)
+      const p0 = list[0];
+      const since = p0.filter(([t]) => t >= (ev.length ? ev[ev.length - 1] : eveningFrom()));
+      if (since.length) {
+        const peak = since.reduce((b, p) => (p[1] > b[1] ? p : b));
+        const rise = p0.map((p, i) => [p[0], d10At(p0, i)]).filter(([t]) => t >= peak[0] - 3600e3 && t <= peak[0]).map((q) => q[1]);
+        if (peak[1] >= 40 && Math.max(...rise) < SLOW_RISE) {
+          return ['charging', 'Charging ↑', `magnetometer rose slowly to ${nT(peak[1])} nT at ${hm(new Date(peak[0]))} (now ${nT(p0[p0.length - 1][1])}): energy is building, a substorm often follows later in the night`];
+        }
       }
-      return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm`];
+      // a calm field: tonight's substorm (if any) for context, Hp30 for "enough here"
+      let after = '';
+      if (ev.length) {
+        let s = ev[ev.length - 1];
+        for (let k = ev.length - 1; k >= 0 && s - ev[k] <= 1800e3; k--) s = ev[k];
+        after = ` · after the ${hm(new Date(s))}–${hm(new Date(ev[ev.length - 1]))} substorm; another one can follow`;
+      }
+      if (hp == null) return ['quiet', 'No data', `calm field, no fresh Hp30${after}`];
+      return hp >= need ? ['possible', 'Possible', `calm field (no substorm now), but the activity is enough here: ${hpTxt}; look north if the sky is clear${after}`]
+        : ['low', 'Low', `calm field, and the activity is below what this place needs: ${hpTxt}${after}`];
     }
-    // only a fresh value is "now" (Hp30 comes ~30 min after its half hour; older than 2 hours = not now)
-    const lastHp = HP30 && HP30.length ? HP30[HP30.length - 1] : null;
-    const hp = lastHp && Date.now() - new Date(lastHp[0]) <= 120 * 60e3 ? lastHp[1] : null;
-    const lvl = hp ?? -9;
-    const txt = lvl > -9 ? `Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}`
-      : lastHp ? `no fresh Hp30 (last one for ${hm(new Date(lastHp[0]))})` : 'live data loading…';
-    if (lvl >= need + 1.5 || (LIVE.ov || 0) >= 20) return ['active', 'Active', txt];
-    if (lvl === -9) return ['quiet', 'No data', txt];
-    if (lvl >= need) return ['possible', 'Possible', txt];
-    return ['quiet', 'Quiet', txt];
+    // no magnetometer nearby (the southern ports): Hp30 and the NOAA model
+    if (hp == null) return (LIVE.ov || 0) >= 20 ? ['active', 'Active', `NOAA model: ${LIVE.ov}% overhead`] : ['quiet', 'No data', 'no fresh Hp30'];
+    if (hp >= need + 1.5 || (LIVE.ov || 0) >= 20) return ['active', 'Active', hpTxt];
+    return hp >= need ? ['possible', 'Possible', hpTxt] : ['low', 'Low', hpTxt];
   }
 
   function basicSky(n) {
@@ -2054,7 +2115,7 @@
     const R = Math.PI / 180;
     const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(la * R) + Math.cos(lat * R) * Math.cos(la * R) * Math.cos((lon - lo) * R)));
     const sky = (SKY && SKY.nights && SKY.nights[date]) || {};
-    const cams = CAMS.map(([id, name, la, lo]) => ({ name: name.replace(' camera', ''), km: km(la, lo), hrs: sky[id] }))
+    const cams = CAMS.map(([id, name, la, lo]) => ({ id, name: name.replace(' camera', ''), km: km(la, lo), hrs: sky[id] }))
       .filter((c) => c.hrs && c.km <= 300).sort((a, b) => a.km - b.km);
     const here = cams.find((c) => c.km <= 60) || null;
     const words = (c) => Object.keys(c.hrs).sort(hourOrder).map((h) => [h, camWord(c.hrs[h])]);
@@ -2063,6 +2124,8 @@
     const hereClear = here ? words(here).filter(([, w]) => w === 'clear' || w.includes('aurora')).map(([h]) => h) : [];
     const hereCloudy = here ? words(here).filter(([, w]) => w === 'cloudy').map(([h]) => h) : [];
     const nearby = cams.filter((c) => c !== here && auroraH(c).length);
+    // how often the camera log was checked that night (every 10 minutes since 2 Oct 2026, once an hour before)
+    const every = here && Object.values(here.hrs).some((v) => v.n) ? 'every 10 minutes' : 'once an hour';
     const span = (hh) => hh.reduce((g, h) => ((g.length && (+g[g.length - 1][g[g.length - 1].length - 1] + 1) % 24 === +h)
       ? (g[g.length - 1].push(h), g) : [...g, [h]]), []).map((x) => `${x[0]}–${pad((+x[x.length - 1] + 1) % 24)}`).join(', ');
     // activity during that night (18:00-06:00 ship time)
@@ -2099,7 +2162,7 @@
     // tiles
     const aur = hereA.length ? { cls: 'ok', word: '✓ Overhead', sub: `${here.name} camera: aurora ${span(hereA)}${act ? ' · ' + act : ''}` }
       : nearby.length ? { cls: 'mid', word: 'Seen nearby', sub: `${act ? act + ' · ' : ''}cameras: ${nearby.map((c) => `${c.name} ${span(auroraH(c))}`).join(', ')}` }
-      : cams.length ? { cls: 'bad', word: 'None seen', sub: act || 'cameras saw no aurora' }
+      : cams.length ? { cls: 'bad', word: 'None seen', sub: act || "no aurora in the cameras' checks" }
       : { cls: act ? (enough ? 'ok' : 'bad') : 'mid', word: act ? (enough ? '✓ Strong enough' : '✕ Too weak') : 'No data', sub: act || 'no camera nearby' };
     const skyT = here
       ? (hereCloudy.length && !hereClear.length ? { cls: 'bad', word: '✕ Cloudy', sub: `camera: cloudy ${span(hereCloudy)}` }
@@ -2125,10 +2188,10 @@
     const names = nearby.map((c) => c.name).join(' and ');
     const clearTxt = metClear && metClear.length ? `clear ${span(metClear.map((h) => h.slice(0, 2)))}` : 'clear hours';
     const line = hereA.length ? `Aurora was out over ${port} and the camera saw it: hope you did too!`
-      : nearby.length && here && hereClear.length ? `Aurora was out over ${names}, but the ${here.name} camera saw none, not even in its clear hour${hereClear.length > 1 ? 's' : ''} (${span(hereClear)}).`
+      : nearby.length && here && hereClear.length ? `Aurora was out over ${names}, but the ${here.name} camera's checks (${every}) found none, not even in its clear hour${hereClear.length > 1 ? 's' : ''} (${span(hereClear)}).`
       : nearby.length && clearHere === false ? `Aurora was out over ${names}, but ${skyAt} was cloudy.`
       : nearby.length && clearHere ? `Aurora was out nearby (${names}) and the sky here had clear hours: low in the north it may have been visible.`
-      : here ? (clearHere ? 'Clear sky, but no aurora on the camera.' : 'Cloudy, and no aurora on the camera.')
+      : here ? (clearHere ? `Clear sky, but no aurora in the camera's checks (${every}).` : `Cloudy, and no aurora in the camera's checks (${every}).`)
       : clearHere == null ? 'No camera here; the cloud analysis is not in yet.'
       : !clearHere ? `${metClear && metClear.length ? `No 2-hour clear gap, only single clear hours (${span(metClear.map((h) => h.slice(0, 2)))})` : 'No clear dark hours'}${vs ? ` (${vs})` : ''}: nothing to see.`
       : strong ? `No camera here to confirm it, but it was ${clearTxt} and activity was strong enough (${vs}): aurora was possible.`
@@ -2161,7 +2224,11 @@
       }
       return { hh, cloud: metAt[hh] ?? null, kp: kpObs(t, t + 3600e3), hp: hp30In(t), need: needAt[hh] ?? need ?? kpNeedAt(lat, lon), mag };
     });
-    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%)` : `${esc(c.name)} camera: no picture`);
+    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%${v.n > 1 ? `; the most auroral of ${v.n} pictures` : ''})` : `${esc(c.name)} camera: no picture`);
+    // the camera's keogram of that night (the whole night in one picture) to check by eye: the place's own camera,
+    // else the nearest one; "latest" until the next evening, then the archive (processed about a day later)
+    const kc = here || cams[0];
+    const keo = kc ? { name: kc.name, url: keogramUrl(kc.id, date) } : null;
     const others = cams.filter((c) => c !== here);
     const why = (i) => {
       const h = hourInfo[i];
@@ -2176,7 +2243,7 @@
       const h = hourInfo[i];
       const v = here && here.hrs[h.hh];
       const cl = h.cloud != null ? Math.round(h.cloud) : v ? (camWord(v) === 'cloudy' ? 90 : camWord(v) === 'clear' || camWord(v).includes('aurora') ? 10 : null) : null;
-      return cl != null ? `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(cl)}</svg>` : '<span class="bico"></span>';
+      return `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${cl != null ? skyGlyph(cl) : UNKNOWN_GLYPH}</svg>`;
     };
     // bar colour: the camera here; without a camera, MET's clouds (twilight = too bright)
     const bar = (hh) => {
@@ -2188,11 +2255,11 @@
     const strips = hasStrip ? `<div class="rowlab">${esc(here ? `${here.name} camera, hour by hour` : `${atSea ? "At the ship's position" : port}: clouds afterwards (MET analysis), hour by hour`)}</div>
       <div class="pstrip" data-row="0">${HOURS.map((h, i) => `<div data-i="${i}" role="button" tabindex="0">${icon(i)}<i class="${bar(h)}"></i>${h}</div>`).join('')}</div>
       <div class="bwhy" id="b-lastwhy"><span class="btap">👆 Tap an hour to see what happened</span></div>
-      <div class="blegend">${here ? '<span><b class="a"></b>aurora</span>' : ''}<span><b class="cl"></b>clear${here ? ', no aurora' : ' (≤40%)'}</span><span><b class="c"></b>cloudy</span><span><b class="m"></b>${here ? 'bright (moon / twilight)' : 'twilight (too bright)'}</span></div>` : '';
+      <div class="blegend">${here ? '<span><b class="a"></b>aurora</span>' : ''}<span><b class="cl"></b>clear${here ? ', no aurora' : ' (≤40%)'}</span><span><b class="c"></b>cloudy</span><span><b class="m"></b>${here ? 'bright (moon / twilight)' : 'twilight (too bright)'}</span><span>? = clouds not known (yet)</span></div>` : '';
     const head = `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]}`;
     const needM = need ?? kpNeedAt(lat, lon);
     const measured = top ? `${top[0]} max ${top[1].toFixed(1)} → ${top[1] >= needM ? 'enough' : 'below'} (${needM.toFixed(1)} needed here)` : '';
-    return { date, place, practice: !cruiseN, skyHead: atSea ? 'Sky at the ship' : `Sky in ${port}`, big, head, aur, sky: skyT, line, fc, alerts, strips,
+    return { date, place, practice: !cruiseN, skyHead: atSea ? 'Sky at the ship' : `Sky in ${port}`, big, head, aur, sky: skyT, line, fc, alerts, strips, keo,
       here, measured, why: (i) => why(i), short: `${head} · ${line}` };
   }
 
@@ -2206,6 +2273,7 @@
       <div class="bline">${esc(P.line)}</div>
       ${P.fc ? `<div class="b-sub">${P.fc}${P.alerts ? ` · alerts: ${esc(P.alerts)}` : ''}</div>` : ''}
       ${P.strips}
+      ${P.keo ? `<div class="b-sub" style="margin-top:6px"><a href="${esc(P.keo.url)}" target="_blank" rel="noopener">${esc(P.keo.name)} camera: the whole night in one picture (keogram) ↗</a></div>` : ''}
     </div>`;
   }
 
@@ -2264,18 +2332,19 @@
           <span class="k g">go</span> dark, cloud ≤40% and aurora chance ≥50% ·
           <span class="k y">maybe</span> cloud ≤70% and aurora chance ≥25% ·
           <span class="k n">no</span> otherwise ·
-          <span class="k t">twilight</span> sun 3–12° below the horizon, too bright for faint aurora.
+          <span class="k t">twilight</span> after sunset, before full darkness: too bright for faint aurora.
           The two tiles under the answer split it in two: <b>Aurora</b> (is the activity strong enough here: active, borderline, too weak) and <b>Sky</b> (clear gap, partly cloudy, cloudy).
           The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
           Tap an hour in the strip to see its numbers. The big answer is the green stretch (yellow if there is none) with the best aurora hours: on clear nights aurora is seen most often around midnight (about 85% of clear nights at 23–00 h, 60% at 20 h; Kiruna all-sky camera statistics, the small green bars under the strip). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
-        <p><b>Aurora now</b> comes from the nearest magnetometer when there is one (Tromsø and Alta area):
-          <b>Quiet</b> = calm field ·
-          <b>Charging ↑</b> = in the evening the field has risen 40+ nT above its quiet level: energy is building up, a substorm often follows later in the night (in last season's data 86% of such evenings, usually 01–03 h) ·
-          <b>Active</b> = it dropped 50+ nT within half an hour: aurora is moving overhead now ·
-          <b>Strong</b> = 200+ nT: a big display.
-          Where there is no magnetometer (further south): <b>Active</b> when Kp/Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it just reaches the level.
-          <b>Daylight</b> = the sun is less than 6° below the horizon.</p>
+        <p><b>Aurora now</b> comes from the nearby magnetometers when there are any (Tromsø and Alta area). It never says "quiet": a calm field only means no substorm right now, and quiet arcs are common up north.
+          <b>Strong</b> = 200+ nT: a big display overhead ·
+          <b>Active</b> = a substorm in the last half hour (a nearby station 50+ nT below its quiet level, or a jump of 50+ nT within 10 minutes, up or down): aurora is moving now ·
+          <b>Charging ↑</b> = in the evening the field has slowly risen 40+ nT above its quiet level: energy is building up, a substorm often follows later in the night (in last season's data 86% of such evenings, usually 01–03 h) ·
+          <b>Possible</b> = a calm field, but the measured activity (Hp30, last hour) is enough for this place ·
+          <b>Low</b> = a calm field and less activity than this place needs.
+          Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
+          <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
         <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
       </details>
@@ -2309,6 +2378,7 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+      if (D.trip && D.trip.watch_nights) KEY_NIGHTS = D.trip.watch_nights;
       [LOG, LAST, TLOG] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null),
         getJSON('data/tonight_log.json').catch(() => null)]);
       HP30 = newerHp30((D.space_weather && D.space_weather.hp30) || [], hpFile && hpFile.series);

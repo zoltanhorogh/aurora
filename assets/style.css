@@ -122,7 +122,7 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .nt { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-width: 0; }
 .nt .v { font-size: 20px; font-weight: 800; margin: 4px 0 2px; }
 .nt .s { font-size: 12px; color: var(--text-2); }
-.nt .a-charging { color: #f2c230; } .nt .a-active, .nt .a-strong, .nt .ok2, .blast .ok2 { color: #5fd35f; } .nt .a-strong { text-shadow: 0 0 12px #1faa59; }
+.nt .a-charging { color: #f2c230; } .nt .a-possible { color: #9fd13b; } .nt .a-low { color: var(--text-2); } .nt .a-active, .nt .a-strong, .nt .ok2, .blast .ok2 { color: #5fd35f; } .nt .a-strong { text-shadow: 0 0 12px #1faa59; }
 .bnights { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; padding-bottom: 4px; }
 .bnc { flex: none; width: 96px; text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
 .bnc .d { font-size: 11px; color: var(--text-2); font-weight: 600; }

@@ -53,7 +53,23 @@ def save_json(path, obj, compact=False):
         f.write("\n")
 
 
+HTTP_CACHE = os.environ.get("AURORA_HTTP_CACHE")  # simulations only (tools/preflight.py --timeline): reuse answers
+
+
 def http_get(url, timeout=60, retries=3):
+    if HTTP_CACHE:
+        import hashlib
+        f = Path(HTTP_CACHE) / (hashlib.sha1(url.encode()).hexdigest() + ".txt")
+        if f.exists():
+            return f.read_text(encoding="utf-8")
+        text = _http_get(url, timeout, retries)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        return text
+    return _http_get(url, timeout, retries)
+
+
+def _http_get(url, timeout=60, retries=3):
     last = None
     for attempt in range(retries):
         try:

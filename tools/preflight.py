@@ -15,8 +15,9 @@
 Nothing in the repository is changed and nothing is sent: all output goes to a temporary folder,
 NTFY_TOPIC is emptied and the alert/notify scripts run with --dry-run.
 
-Usage:  python tools/preflight.py            full check (~3-5 min, needs internet)
-        python tools/preflight.py --quick    page checks on the current data only (~1 min)
+Usage:  python tools/preflight.py              full check (~10 min, needs internet)
+        python tools/preflight.py --quick      page checks on the current data only (~1 min)
+        python tools/preflight.py --timeline   full check plus every day from today to after the cruise (~30 min)
 """
 import argparse
 import json
@@ -106,7 +107,7 @@ INJECT = r"""<script>
       const z = text.match(/≈0(?![.\d])|\b0\.0 needed/);
       check(`${label}: no need rounded to 0`, !z, z && z[0]);
       if (ranges) {
-        const r = text.match(/\b(\d\d:\d\d)–\1(?!\d)|\b(\d\d)–\2\b/);
+        const r = text.match(/\b(\d\d:\d\d)–\1(?!\d)|(?<![:\d])(\d\d)–\2(?![:\d])/); // "22:00–00:00" is no X–X
         check(`${label}: no X–X time range`, !r, r && r[0]);
       }
     };
@@ -121,6 +122,15 @@ INJECT = r"""<script>
     await sleep(300);
     const b = document.querySelector('#basic');
     lint('basic', b.textContent, true);
+    // a calm magnetometer is not "no aurora": the word is gone (1 Oct 2026); every hour of last night has an icon;
+    // no sun degrees in the explanations
+    const q = b.textContent.match(/.{0,30}\bQuiet\b.{0,30}/);
+    check('basic: never "Quiet"', !q, q && q[0]);
+    const cells = [...b.querySelectorAll('#b-last .pstrip > div')];
+    if (cells.length) check('basic last night: an icon on every hour', cells.every((c) => c.querySelector('svg')), `${cells.filter((c) => !c.querySelector('svg')).length} without`);
+    const expl = ((b.querySelector('.bhow') || {}).textContent || '') + ((document.querySelector('#guide') || {}).textContent || '');
+    const deg = expl.match(/.{0,30}\d\s*°(?!C).{0,30}/);
+    check('no sun degrees in the explanations', !deg, deg && deg[0]);
     const cards = [...b.querySelectorAll(':scope > .b-card:not(#b-last)')];
     const tonightCard = cards.find((c) => /^Tonight/.test(((c.querySelector('.b-k') || {}).textContent || '').trim()));
     const tk = tonightCard ? tonightCard.querySelector('.b-k').textContent.trim() : '';
@@ -147,6 +157,18 @@ INJECT = r"""<script>
     for (let i = 0; i < 150 && !document.querySelector('#night-cards .night'); i++) await sleep(200);
     // links and reloads: where the page lands (no click-through in these scenarios)
     const ex = P.get('expect');
+    if (ex === 'mag') {
+      // the real magnetometer evening of 1 Oct 2026 (tools/fixtures): what "Aurora now" says at a moment
+      if (P.get('tile')) {
+        const w = ((document.querySelector('#lt-mag .magword') || {}).textContent || '').trim();
+        check(`advanced magnetometer tile at ${P.get('at')} says ${P.get('tile')}`, w === P.get('tile'), w);
+      }
+      document.querySelector('#mode button[data-mode="basic"]').click();
+      await sleep(500);
+      const v = ((document.querySelector('#basic .now3 .nt .v') || {}).textContent || '').trim();
+      check(`aurora now at ${P.get('at')} (1 Oct 2026) says ${P.get('word')}`, v.startsWith(P.get('word')), v);
+      return finish();
+    }
     if (ex === 'deeplink' || ex === 'hash' || ex === 'restore') {
       await sleep(1800);
       const hdr = document.querySelector('.topbar').offsetHeight;
@@ -342,12 +364,12 @@ def slot_clock(day, hour):
     return datetime(d.year, d.month, d.day, hour, tzinfo=timezone.utc) - SHIP_OFFSET
 
 
-def prepare_set(tmp, name, target, on, base_env, problems):
+def prepare_set(tmp, name, target, on, base_env, problems, extra_env=None):
     """A data set with the cruise moved (target date on `on`), built by the pipeline (update + weather)."""
     data, cfg = tmp / f"data-{name}", tmp / f"config-{name}"
     shutil.copytree(ROOT / "data", data)
     days, it = shifted_config(cfg, target, on)
-    env = {**base_env, "AURORA_DATA": str(data), "AURORA_CONFIG": str(cfg)}
+    env = {**base_env, "AURORA_DATA": str(data), "AURORA_CONFIG": str(cfg), **(extra_env or {})}
     for script in ("update.py", "weather.py"):
         run_script(script, [], env, problems, f"timeline {name} (cruise moved {days} days)")
     record_sources(data, f"timeline {name}")
@@ -529,6 +551,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true", help="skip the pipeline runs")
     ap.add_argument("--keep", action="store_true", help="keep the temporary folder")
+    ap.add_argument("--timeline", action="store_true", help="also every day from today to after the cruise (~30 min)")
     args = ap.parse_args()
     problems = []
 
@@ -570,6 +593,21 @@ def main():
         if clock_pw:
             pw.write_text(json.dumps(latest_pw, ensure_ascii=False), encoding="utf-8")
             scenarios.append(("tonight: the window is over, overcast after", "pastwin", int((clock_pw - now).total_seconds()), "&expect=nowindow"))
+        # The real magnetometer evening of 1 Oct 2026 (FMI IMAGE, CC BY 4.0; GFZ Hp30, CC BY 4.0) in tools/fixtures:
+        # slow charge to +71 nT by 19:26, a substorm 22:47-23:43 (Kilpisjärvi +83 nT in 10 min, Masi -90), calm after
+        fx = ROOT / "tools" / "fixtures"
+        make_site(web / "mag", ROOT / "data")
+        shutil.copy2(fx / "mag_2026-10-01.json", web / "mag" / "data" / "mag.json")
+        shutil.copy2(fx / "hp30_2026-10-01.json", web / "mag" / "data" / "hp30.json")
+        lm = web / "mag" / "data" / "latest.json"
+        latest_m = json.loads(lm.read_text(encoding="utf-8"))
+        latest_m["space_weather"]["hp30"] = latest_m["space_weather"]["hp30_week"] = json.loads(
+            (fx / "hp30_2026-10-01.json").read_text(encoding="utf-8"))["series"]
+        lm.write_text(json.dumps(latest_m, ensure_ascii=False), encoding="utf-8")
+        for at, utc, word in (("19:50", "2026-10-01T17:50:00Z", "Charging"), ("22:52", "2026-10-01T20:52:00Z", "Active&tile=substorm"),
+                              ("00:20", "2026-10-01T22:20:00Z", "Possible")):
+            clock = int((datetime.fromisoformat(utc.replace("Z", "+00:00")) - now).total_seconds())
+            scenarios.append((f"magnetometer 1 Oct {at}: {word}", "mag", clock, f"&expect=mag&at={at}&word={word}"))
         # links from notifications and reloads (the address must not keep a link: Safari jumped there on every reload)
         dates = [n["date"] for n in latest_pw["nights"]]
         today = ship_today()
@@ -632,6 +670,19 @@ def main():
                 sets = {k: f.result() for k, f in futs.items()}
             for k, (data_k, env_k) in sets.items():
                 make_site(web / k, data_k)
+            if args.timeline:
+                # every day from today to two days after the cruise: the cruise moved so that day is today
+                # (HTTP answers cached, no ensemble calls: their daily quota; the page logic is what is tested)
+                last_day = date.fromisoformat(it["nights_to"]) + timedelta(days=3)
+                day_list = [ship_today() + timedelta(days=k) for k in range((last_day - ship_today()).days + 1)]
+                xenv = {"AURORA_HTTP_CACHE": str(tmp / "http-cache"), "AURORA_NO_ENSEMBLE": "1"}
+                print(f"  timeline: {len(day_list)} days, pipeline runs 3 at a time")
+                with ThreadPoolExecutor(max_workers=3) as ex:
+                    futs = {d: ex.submit(prepare_set, tmp, f"day-{d.isoformat()}", d, ship_today(), base_env, problems, xenv) for d in day_list}
+                    for d, f in futs.items():
+                        data_d, _env = f.result()
+                        make_site(web / f"day-{d.isoformat()}", data_d)
+                        timeline.append((f"day {d.isoformat()}", f"day-{d.isoformat()}", SLOTS))
             timeline += [("Tromsø today", "ship", SLOTS),
                          ("departure tomorrow", "departure", SLOTS + [(1, 15), (1, 18)]),
                          ("last sea night today", "last-night", SLOTS + [(2, 20)])]
@@ -677,6 +728,13 @@ def main():
                             problems.append(f"timeline {name} {slot}: {c['name']} {c['msg']}".rstrip())
                     bad += bool(r["errors"]) + sum(not c["ok"] for c in r["checks"])
                 timeline_checks(name, [(slot, r.get("state")) for slot, r in res], problems)
+                if name.startswith("day "):
+                    # that day's night is "tonight" at 18:00 (the cruise moved onto today), none after the cruise nights
+                    t0 = ship_today()
+                    want = f"{t0.strftime('%a')} {t0.day} {t0.strftime('%b')}" if date.fromisoformat(name[4:]) <= date.fromisoformat(it["nights_to"]) else "Tonight"
+                    got = next(((r.get("state") or {}).get("tonight") for slot, r in res if slot == "D0 18:00"), None)
+                    if got != want:
+                        problems.append(f"timeline {name}: at 18:00 'tonight' is {got}, expected {want}")
                 print(f"  {'ok ' if not bad else 'FAIL'} {name}: {len(res)} moments, " + " · ".join(
                     f"{slot.split()[1]} {(r.get('state') or {}).get('tonight', '?')}" for slot, r in res[:1] + res[-1:]))
             scenarios += [(f"timeline {name}", site, 0) for name, site, _ in timeline]
