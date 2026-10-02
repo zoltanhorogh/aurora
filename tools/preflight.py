@@ -290,6 +290,19 @@ INJECT = r"""<script>
         await sleep(100);
         check('basic hour strip: second tap clears the highlight', !cell.classList.contains('sel') && /Tap an hour/.test(document.querySelector('#b-why').textContent));
       }
+      // every "›" tile/card of the basic view opens the advanced view scrolled to its explanation
+      const goKeys = [...new Set([...b.querySelectorAll('[data-go]')].map((x) => x.dataset.go))];
+      for (const key of goKeys) {
+        document.querySelector('#mode button[data-mode="basic"]').click();
+        await sleep(300);
+        const x = document.querySelector(`#basic [data-go="${key}"]`);
+        if (!x) continue;
+        x.click();
+        await sleep(1900);
+        check(`basic tap "${key}" opens its explanation in the advanced view`, !document.body.classList.contains('basic-mode') && window.scrollY > 150,
+          `scrollY ${Math.round(window.scrollY)}`);
+      }
+      if (goKeys.length) { document.querySelector('#mode button[data-mode="basic"]').click(); await sleep(300); }
       const card = b.querySelector('.bnc');
       if (card) {
         card.click();

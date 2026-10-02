@@ -508,7 +508,7 @@
     const v = inlandView(n);
     if (!v) return '';
     return `<details class="binland"><summary><span class="${v.cls}">🚗 ${esc(v.text)}</span></summary>
-      ${inlandTable(n.inland)}<div class="b-sub">${INLAND_NOTE(n.inland)}</div></details>`;
+      ${inlandTable(n.inland)}<div class="b-sub">${INLAND_NOTE(n.inland)} <span class="bgo" data-go="inland" role="button" tabindex="0">In the advanced view ›</span></div></details>`;
   }
 
   function inlandAdvanced(n) {
@@ -2252,7 +2252,7 @@
     const practice = places.every((p) => /^Tromsø/.test(p)) && (h.practice ?? !h.sailing);
     const where = practice ? 'Tromsø, the practice spot until the cruise starts'
       : places.some((p) => /practice/.test(p)) ? `hour by hour: ${esc(places.join(' → '))}` : `where the ship will be each hour: ${esc(places.join(' → '))}`;
-    return `<div class="b-card"><div class="b-k">Weather here · next 24 hours</div>
+    return `<div class="b-card tapgo" data-go="weather" role="button" tabindex="0"><div class="b-k">Weather here · next 24 hours</div>
       <div class="bplace-s" style="margin-top:4px">${where}</div>
       <div class="wx-sum">${wxSummaryLine(h.summary)}</div>${adviceChips(h.advice)}${wxTable(rows, 65)}
       <p class="hint" style="margin:6px 0 0">Every 2nd hour shown · MET Norway · updated with each forecast run.</p></div>`;
@@ -2425,7 +2425,7 @@
   }
 
   function prevNightCard(P) {
-    return `<div class="b-card" id="b-last"><div class="b-k">Last night · ${dayLabel(P.date)} <span class="btag">MORNING</span></div>
+    return `<div class="b-card" id="b-last"><div class="b-k">Last night · ${dayLabel(P.date)} <span class="btag">MORNING</span> <span class="bgo" data-go="last" role="button" tabindex="0">Details ›</span></div>
       <div class="bplace">📍 ${esc(P.place)}</div>
       <div class="bplace-s">${P.practice ? 'practice spot until the cruise starts' : 'where the ship was that night, from the published itinerary'}</div>
       <div class="b-big"><span class="b-sym ${P.big[0]}">${{ g: '✓', y: '?', n: '✕', u: '…' }[P.big[0]]}</span><span class="b-verdict">${esc(P.big[1])} <small>${esc(P.big[2])}</small></span></div>
@@ -2436,6 +2436,53 @@
       ${P.strips}
       ${P.keo ? `<div class="b-sub" style="margin-top:6px"><a href="${esc(P.keo.url)}" target="_blank" rel="noopener">${esc(P.keo.name)} camera: the whole night in one picture (keogram) ↗</a></div>` : ''}
     </div>`;
+  }
+
+  // ------------------------------------------------------------ basic → the advanced part that explains it
+  // (user's list, 2 Oct 2026). The target is looked up again at every scroll step: the model check panel renders
+  // when it opens, which replaces its contents.
+  const scrollToFind = (find) => scrollToY(() => {
+    const e = find();
+    return e ? Math.max(0, e.getBoundingClientRect().top + window.scrollY - headerOffset()) : window.scrollY;
+  });
+  // Tonight's night: the cruise night's detail on board, the model check's Tromsø night before the cruise.
+  // part: 'chart' (Kp forecast vs need), 'hours' (Hour by hour), 'inland' (the inland table)
+  function explainTonight(t, part) {
+    let root;
+    if (t.practice) {
+      const mc = D.model_check;
+      const days = (mc && (mc.days || [mc.date])) || [];
+      checkDay = Math.max(0, days.indexOf(t.date));
+      checkSpot = Math.max(0, checkNights().findIndex((n) => n.spot === 'Tromsø'));
+      const cp = $('#check-panel');
+      if (cp.open) safe(renderCheck); else cp.open = true; // its toggle listener renders it
+      root = () => $('#check-detail');
+    } else {
+      selected = t.date;
+      renderCards();
+      renderDetail();
+      root = () => $('#night-detail');
+    }
+    const find = () => {
+      const r = root();
+      if (!r) return null;
+      const h3 = [...r.querySelectorAll('h3')].find((x) => /^Hour by hour/.test(x.textContent));
+      return (part === 'chart' ? r.querySelector('.chart') : part === 'inland' ? r.querySelector('.inl') : h3) || r;
+    };
+    setTimeout(() => scrollToFind(find), 100);
+  }
+  // Last night: the past cruise night's detail on board, the "Last night up north" panel before the cruise
+  function explainLast(P) {
+    if (P && D.nights.some((n) => n.date === P.date)) {
+      selected = P.date;
+      renderCards();
+      renderDetail();
+      scrollToFind(() => $('#night-detail'));
+      return;
+    }
+    const ln = $('#last-night');
+    if (ln) ln.open = true;
+    scrollToFind(() => $('#last-night'));
   }
 
   function renderBasic() {
@@ -2455,7 +2502,7 @@
         ${stormBasic(t.n)}
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
-          `<div class="bf ${f.cls}"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
+          `<div class="bf ${f.cls} tapgo" data-go="${k === 'Aurora' ? 'aurora' : 'sky'}" role="button" tabindex="0"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
         ${inlandBasic(t.n)}
         <div class="bline">${esc(v.line)}</div>
         ${basicChange(t.n.date, v) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date, v))}</div>` : ''}
@@ -2465,7 +2512,7 @@
     const [acls, aword, atxt] = basicAuroraNow();
     const [scls, sword, stxt] = basicSky(t && t.n);
     const [shipword, shiptxt] = basicShip(t);
-    const tile = (k, v, cls, txt) => `<div class="nt"><div class="b-k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${txt}</div></div>`;
+    const tile = (k, v, cls, txt, go) => `<div class="nt${go ? ' tapgo' : ''}"${go ? ` data-go="${go}" role="button" tabindex="0"` : ''}><div class="b-k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${txt}</div></div>`;
     const upcoming = D.nights.filter((n) => !isPast(n) && n.date !== (t && t.date));
     // Last night: a full card above tonight in the morning (until noon), one line further down later in the day
     const P = basicPrevNight(t);
@@ -2480,16 +2527,17 @@
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
       ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
-        <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt)}${tile('Sky here', sword, scls, stxt)}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt)}</div></div>`}
+        <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
           <div class="p">${esc(shortPlace(n.place)).replace(/^At sea · /, 'at sea · ')}</div><div class="v">${pct(n.score)}</div>
           <div class="r" style="color:${RATING_HEX[n.rating]}">${n.rating}</div><div class="bar" style="background:${RATING_HEX[n.rating]}"></div></button>`).join('')}</div></div>`}
-      ${P && !morning ? `<div class="b-card"><div class="b-k">Last night · ${dayLabel(P.date)} · ${esc(P.place)}</div><div class="blast">${esc(P.short)}</div>${P.fc ? `<div class="b-sub" style="margin-top:4px">${P.fc}</div>` : ''}</div>` : ''}
+      ${P && !morning ? `<div class="b-card tapgo" data-go="last" role="button" tabindex="0"><div class="b-k">Last night · ${dayLabel(P.date)} · ${esc(P.place)}</div><div class="blast">${esc(P.short)}</div>${P.fc ? `<div class="b-sub" style="margin-top:4px">${P.fc}</div>` : ''}</div>` : ''}
       ${basicWeather()}
       <div class="balerts">🔔 ${s.phase === 'over' ? 'Alerts have stopped: the cruise is over.'
         : Date.now() >= new Date(D.trip.start).getTime() - 6 * 3600e3 ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the day of departure.'}</div>
       <details class="bhow"><summary>How is this decided?</summary>
+        <p>Tiles and cards marked <b>›</b> open the part of the advanced view that explains them (Tonight's Aurora tile: the Kp forecast against the need; Sky: hour by hour; Aurora now: the live values; Sky here: the satellite picture; Last night: that night's details).</p>
         <p><b>Where</b>: before the cruise, "tonight" is Tromsø, for practice. On board it follows the ship's planned position hour by hour, from Princess' published itinerary: the port while docked, the route between ports at sea. It is not live GPS, so a change of course or schedule is not known here.</p>
         <p><b>Tonight, hour by hour</b> (MET Norway's local forecast, about 2.5 days ahead):
           <span class="k g">go</span> dark, cloud ≤40% and aurora chance ≥50% ·
@@ -2528,6 +2576,19 @@
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
     const bs = $('#b-storm');
     if (bs) bs.addEventListener('click', () => setMode('advanced', () => scrollToY(yOf($('#storm')))));
+    const GO = {
+      aurora: () => explainTonight(t, 'chart'), sky: () => explainTonight(t, 'hours'), inland: () => explainTonight(t, 'inland'),
+      now: () => scrollToFind(() => $('#live')), skynow: () => scrollToFind(() => $('#sat')),
+      ship: () => scrollToFind(() => $('#itinerary')), weather: () => scrollToFind(() => $('#weather')), last: () => explainLast(P),
+    };
+    el.querySelectorAll('[data-go]').forEach((x) => x.addEventListener('click', (ev) => {
+      // the hour strips inside a card keep their own taps
+      if (ev.target.closest('.bstrip, .pstrip, .bwhy') && x.dataset.go !== 'last') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const go = GO[x.dataset.go];
+      if (go && (x.dataset.go !== 'aurora' && x.dataset.go !== 'sky' && x.dataset.go !== 'inland' || (t && t.n))) setMode('advanced', go);
+    }));
     const bh = $('#b-hourly');
     if (bh) bh.addEventListener('toggle', () => { if (bh.open) drawHourly(t.n, $('#b-chart')); });
     if (P && morning) {
