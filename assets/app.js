@@ -518,6 +518,106 @@
       <p class="${v.cls}">🚗 ${esc(v.text)}</p>${inlandTable(n.inland)}<p class="hint">${INLAND_NOTE(n.inland)}</p></div>`;
   }
 
+  // ------------------------------------------------------------ NOAA storm watch
+  // Storm-level blocks (G1+ = Kp 4.67+, NOAA's scale) in NOAA's 3-day forecast that are not over yet, joined into
+  // periods. The cause comes from NOAA's own reasoning for that (UT) day; without one, a NASA CME arrival nearby.
+  const G_WORD = { G1: 'minor', G2: 'moderate', G3: 'strong', G4: 'severe', G5: 'extreme' };
+  const gLevel = (kp) => (kp >= 8.67 ? 'G5' : kp >= 7.67 ? 'G4' : kp >= 6.67 ? 'G3' : kp >= 5.67 ? 'G2' : 'G1');
+  // where "here" is at a moment: Tromsø before the cruise, the ship's planned position on board
+  const placeAt = (t) => {
+    if (t < new Date(D.trip.cruise_day_from).getTime()) return [69.65, 18.96, 'Tromsø'];
+    const r = (D.route_hourly || []).reduce((b, x) => (!b || Math.abs(new Date(x[0]) - t) < Math.abs(new Date(b[0]) - t) ? x : b), null);
+    return r ? [r[1], r[2], r[3] === 'sea' ? 'at sea' : r[4]] : [69.65, 18.96, 'Tromsø'];
+  };
+  function stormCause(p) {
+    const sw = D.space_weather || {};
+    const txt = (sw.three_day || {}).rationale || '';
+    // NOAA names the (UT) days of its forecast: "... on 02 Oct (due to ... the 28 Sep CME) and 04 Oct (as ... CH/HSS ...)";
+    // the text after this day's name up to the next forecast day's name is about this day
+    const keysOf = (t) => { const d = new Date(t); return [`${pad(d.getUTCDate())} ${MON[d.getUTCMonth()]}`, `${MON[d.getUTCMonth()]} ${pad(d.getUTCDate())}`]; };
+    const own = keysOf(p.a);
+    const i = Math.max(...own.map((k) => txt.indexOf(k)));
+    if (i >= 0) {
+      const rest = txt.slice(i + 6);
+      const others = [...new Set((sw.kp_3day || []).map((r) => r.t.slice(0, 10)))].flatMap((day) => keysOf(`${day}T00:00:00Z`)).filter((k) => !own.includes(k));
+      const seg = rest.slice(0, Math.min(rest.length, ...others.map((k) => rest.indexOf(k)).filter((x) => x >= 0)));
+      const cme = /CME/.test(seg), ch = /\bCH\b|CH\/HSS|coronal hole|HSS/.test(seg);
+      if (cme && ch) return 'a solar eruption (CME) and fast wind from a coronal hole';
+      if (cme) return 'a solar eruption (CME)';
+      if (ch) return 'fast solar wind from a coronal hole';
+    }
+    const near = (sw.cmes || []).some((c) => { const t = new Date(c.arrival).getTime(); return t > p.a - 18 * 3600e3 && t < p.b + 6 * 3600e3; });
+    return near ? 'a solar eruption (CME)' : '';
+  }
+  function stormPeriods() {
+    const now = Date.now();
+    const blocks = ((D.space_weather || {}).kp_3day || []).filter((r) => r.kind !== 'observed' && r.kp >= 4.67)
+      .map((r) => ({ a: new Date(r.t).getTime(), b: new Date(r.t).getTime() + 3 * 3600e3, kp: r.kp }))
+      .filter((k) => k.b > now).sort((x, y) => x.a - y.a);
+    const out = [];
+    for (const k of blocks) {
+      const last = out[out.length - 1];
+      if (last && last.b === k.a) { last.b = k.b; last.kp = Math.max(last.kp, k.kp); } else out.push({ ...k });
+    }
+    return out.map((p) => {
+      const [lat, lon, place] = placeAt((p.a + p.b) / 2);
+      // which half hours of it are dark there (sun 12° below the horizon, the page's darkness)
+      const dark = [];
+      for (let t = p.a; t < p.b; t += 1800e3) if (sunAltAt(new Date(t + 900e3), ...placeAt(t + 900e3).slice(0, 2)) <= -12) dark.push(t);
+      const darkTxt = dark.length === (p.b - p.a) / 1800e3 ? '' : !dark.length ? 'not dark there'
+        : `dark there only ${hm(dark[0])}–${hm(dark[dark.length - 1] + 1800e3)}`;
+      return { ...p, g: gLevel(p.kp), cause: stormCause(p), place, need: kpNeedAt(lat, lon), darkTxt };
+    });
+  }
+  const stormWhen = (p) => `${dayLabel(shipDate(p.a).toISOString().slice(0, 10))} ${hm(p.a)}–${hm(p.b)}`;
+  const stormHere = (p) => (p.kp - p.need >= 2 ? 'if it comes and the sky is clear, a bright, moving display'
+    : p.kp >= p.need ? 'if it comes, it should reach here too' : 'probably not enough this far south');
+
+  // Basic: one line on the Tonight card when a storm period falls into tonight's dark hours
+  function stormBasic(n) {
+    if (!n || shipNow().phase === 'over') return '';
+    const dark = n.hourly.filter((h) => h.dark).map((h) => new Date(h.t).getTime());
+    if (!dark.length) return '';
+    const a = Math.min(...dark), b = Math.max(...dark) + 3600e3;
+    const p = stormPeriods().find((x) => x.a < b && x.b > a);
+    if (!p) return '';
+    return `<div class="bstorm" id="b-storm" role="button" tabindex="0">⚡ <b>NOAA storm watch:</b> ${G_WORD[p.g]} storm (${p.g}, Kp ${p.kp.toFixed(1)}) expected tonight ${hm(p.a)}–${hm(p.b)}${p.cause ? `, from ${p.cause}` : ''}. About ${n.kp_req.toFixed(1)} is enough here: ${stormHere({ ...p, need: n.kp_req })}. <span class="btap">Details ›</span></div>`;
+  }
+
+  // Advanced: the storm periods of the next days, NOAA's reasoning, the CME model and what is measured now
+  function renderStorm() {
+    const el = $('#storm');
+    if (!el) return;
+    const P = stormPeriods();
+    if (!P.length || shipNow().phase === 'over') { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const sw = D.space_weather || {};
+    const cmes = (sw.cmes || []).filter((c) => new Date(c.arrival).getTime() > Date.now() - 24 * 3600e3);
+    el.style.display = '';
+    el.innerHTML = `<h3>⚡ NOAA storm watch</h3>
+      <p class="hint" style="margin-top:0">NOAA's 3-day forecast has storm-level activity coming: G1 or more = Kp 4.7+. Scale: G1 minor · G2 moderate · G3 strong · G4 severe · G5 extreme. Times are ship time.</p>
+      <div class="tbl-wrap"><table class="storm">
+        <tr><th>When</th><th>Level</th><th>Cause</th><th>Needed there</th></tr>
+        ${P.map((p) => `<tr><td>${stormWhen(p)}</td><td>${p.g} ${G_WORD[p.g]} · Kp ${p.kp.toFixed(1)}</td><td>${esc(p.cause || 'not stated')}</td>
+          <td>${esc(p.place)} ${p.need.toFixed(1)} → ${p.kp - p.need >= 2 ? '<span class="ok">well above</span>' : p.kp >= p.need ? '<span class="ok">enough</span>' : 'below'}${p.darkTxt ? `<br><span class="why">${p.darkTxt}</span>` : ''}</td></tr>`).join('')}
+      </table></div>
+      ${sw.three_day && sw.three_day.rationale ? `<p><b>NOAA's reasoning:</b> ${esc(sw.three_day.rationale)}</p>` : ''}
+      ${cmes.length ? `<p><b>NASA CME model:</b> ${cmes.map((c) => `modelled arrival ${dayLabel(shipDate(c.arrival).toISOString().slice(0, 10))} ${hm(c.arrival)}${c.glancing ? ' (glancing blow)' : ''}, Kp ${c.kp_min ?? '?'}–${c.kp_max ?? '?'}`).join(' · ')}</p>` : ''}
+      <p id="storm-now"></p>
+      <p class="hint">The timing is often hours off: NOAA updates this forecast several times a day, and a CME can arrive many hours earlier or later than modelled, or miss. What is measured now shows whether it has started.</p>`;
+    updateStormNow();
+  }
+  function updateStormNow() {
+    const el = $('#storm-now');
+    if (!el) return;
+    const hp = hp30Now();
+    const parts = [LIVE.sw != null ? `solar wind ${LIVE.sw} km/s (a CME usually pushes it to 450+)` : null,
+      LIVE.bt != null ? `Bt ${LIVE.bt} nT (storms usually 10+)` : null,
+      hp != null ? `Hp30 ${hp.toFixed(1)} (storm level 4.7+)` : null].filter(Boolean);
+    if (!parts.length) { el.innerHTML = '<b>Now:</b> loading the live values…'; return; }
+    const signs = [LIVE.sw >= 450 && 'fast solar wind', LIVE.bt >= 10 && 'strong magnetic field', hp != null && hp >= 4.67 && 'storm level measured'].filter(Boolean);
+    el.innerHTML = `<b>Now (${hm(Date.now())}):</b> ${parts.join(' · ')} → ${signs.length ? `<span class="ok">under way: ${signs.join(', ')}</span>` : 'no sign of it yet'}`;
+  }
+
   function hoursTable(n) {
     const hasMet = metCovers(n);
     const rows = n.hourly.filter((h) => h.sun < -3 && h.cloud_met != null);
@@ -1041,10 +1141,14 @@
     const need = liveNeed();
     getJSON(`${SWPC}/products/summary/solar-wind-mag-field.json`).then((a) => {
       const bz = a[0].bz_gsm;
+      LIVE.bt = a[0].bt;
+      safe(updateStormNow);
       setTile('lt-bz', `${bz > 0 ? '+' : ''}${bz}<small> nT</small>`, bz <= -5 ? '✓ strongly south: door open' : bz < 0 ? 'slightly south' : '✕ north: door mostly closed');
     }).catch(() => setTile('lt-bz', '–', 'offline'));
     getJSON(`${SWPC}/products/summary/solar-wind-speed.json`).then((a) => {
       const v = a[0].proton_speed;
+      LIVE.sw = v;
+      safe(updateStormNow);
       setTile('lt-sw', `${v}<small> km/s</small>`, v >= 500 ? '✓ fast' : v >= 400 ? 'moderate' : 'slow');
     }).catch(() => setTile('lt-sw', '–', 'offline'));
     const st = $('#live-stamp');
@@ -1058,6 +1162,7 @@
     if (mag) MAG = mag;
     updateHp30Tile();
     updateMagTile();
+    safe(updateStormNow);
     safe(drawMagChart);
     basicRefresh();
   }
@@ -2347,6 +2452,7 @@
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
         <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
         <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
+        ${stormBasic(t.n)}
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
           `<div class="bf ${f.cls}"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
@@ -2402,6 +2508,7 @@
           <b>Low</b> = a calm field and less activity than this place needs.
           Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
           <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
+        <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details.</p>
         <p><b>Inland</b> (Tromsø 15 Oct, Alta 16–17 Oct, and Tromsø for practice): MET's clouds at the usual chase-tour areas behind the coastal mountains, where it is often clearer (from Tromsø: Nordkjosbotn, Skibotn, Kilpisjärvi; from Alta: Gargia, Masi, Kautokeino). "Clearer inland" = one of them has a clear stretch (2+ hours ≤40% cloud) still to come and here has none, or one at least 2 hours shorter. Tap the line for the hours.</p>
         <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
@@ -2419,6 +2526,8 @@
       scrollToY(yOf($('#night-detail')));
     })));
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
+    const bs = $('#b-storm');
+    if (bs) bs.addEventListener('click', () => setMode('advanced', () => scrollToY(yOf($('#storm')))));
     const bh = $('#b-hourly');
     if (bh) bh.addEventListener('toggle', () => { if (bh.open) drawHourly(t.n, $('#b-chart')); });
     if (P && morning) {
@@ -2451,7 +2560,7 @@
     // only the sections of the menu (#live, #mag, ...) count as link targets
     const hashEl = [...document.querySelectorAll('#tabs a')].some((a) => a.getAttribute('href') === LINK.hash) ? document.querySelector(LINK.hash) : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
-    [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderSat, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
+    [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderStorm, renderSwpcText, renderLive, renderSat, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     startLiveRefresh();
     document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
     // A notification about another night than tonight opens that night's detail in the advanced view (this visit only,

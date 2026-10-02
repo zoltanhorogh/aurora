@@ -253,6 +253,8 @@ INJECT = r"""<script>
         && (!!b.querySelector('.b-verdict') || over || /No forecast for tonight/.test(b.textContent)));
       if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf').length === 2);
       if (b.querySelector('#b-last')) check('basic last-night card has its two tiles', b.querySelectorAll('#b-last .bfx .bf').length === 2);
+      const bst = b.querySelector('#b-storm');
+      if (bst) check('basic storm line reads as one sentence', /^⚡ NOAA storm watch: (minor|moderate|strong|severe|extreme) storm \(G\d, Kp \d\.\d\) expected tonight \d\d:\d\d–\d\d:\d\d/.test(bst.textContent.trim()), bst.textContent.trim());
       const inl = b.querySelector('.binland');
       if (inl) check('basic inland line: one answer and its table', /^🚗 Inland: (clearer at|no clearer than here|cloudy too)/.test(inl.querySelector('summary').textContent.trim())
         && inl.querySelectorAll('table.itab tr').length === 5, inl.querySelector('summary').textContent.trim());

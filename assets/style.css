@@ -89,6 +89,15 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .bf.mid { background: rgba(242,194,48,.12); border-color: rgba(242,194,48,.5); color: #f5d77a; }
 .bf.bad { background: rgba(208,59,59,.12); border-color: rgba(208,59,59,.5); color: #f0a3a3; }
 .bline { font-size: 14px; color: var(--text); margin: 0 0 6px; }
+.bstorm { font-size: 13px; line-height: 1.45; color: #f5d36b; background: rgba(242,194,48,.08); border: 1px solid rgba(242,194,48,.45);
+  border-radius: 10px; padding: 7px 10px; margin: 8px 0 4px; cursor: pointer; }
+.bstorm b { color: #f2c230; }
+#storm { margin-bottom: 14px; border-color: rgba(242,194,48,.45); }
+#storm h3 { margin-top: 0; color: #f2c230; }
+#storm p { font-size: 14px; }
+#storm .why { color: var(--muted); font-size: 12px; }
+#storm .ok { color: #5fd35f; }
+table.storm td, table.storm th { text-align: left; white-space: normal; }
 .binland { margin: 2px 0 8px; font-size: 13px; }
 .binland summary { cursor: pointer; color: var(--text-2); }
 .binland .ok, .inl .ok, table.itab .ok { color: #5fd35f; }

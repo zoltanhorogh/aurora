@@ -24,7 +24,7 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="assets/style.css?v=71">
+<link rel="stylesheet" href="assets/style.css?v=72">
 </head>
 <body>
 <div class="aurora-glow"></div>
@@ -79,6 +79,7 @@
 
   <section id="space">
     <h2>Space weather</h2>
+    <div class="panel" id="storm" style="display:none"></div>
     <div class="grid2">
       <div class="panel" id="kp27-panel"></div>
       <div class="panel" id="kp3-panel"></div>
@@ -179,6 +180,7 @@
           <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot.</li>
           <li><b>27-day recurrence</b> – the Sun turns every ~27 days, so what happened 27 days before a night often repeats.</li>
           <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp.</li>
+          <li><b>G1–G5</b> – NOAA's storm scale: G1 minor (Kp 5, from 4.7), G2 moderate (6), G3 strong (7), G4 severe (8), G5 extreme (9). A storm matters most further south: up north even quiet activity is enough.</li>
         </ul>
       </div>
       <div class="panel">
@@ -225,6 +227,6 @@
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="assets/app.js?v=71"></script>
+<script src="assets/app.js?v=72"></script>
 </body>
 </html>
