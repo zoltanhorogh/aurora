@@ -98,14 +98,16 @@ def main():
         trip_start = parse_utc(latest["trip"]["start"]) - timedelta(days=1)
         trip_end = parse_utc(latest["trip"]["end"])
         new_cmes = [c for c in latest["space_weather"].get("cmes", [])
-                    if trip_start <= parse_utc(c["arrival"]) <= trip_end and c["arrival"] not in state.get("cmes_sent", [])]
+                    if trip_start <= parse_utc(c["arrival"]) <= trip_end and parse_utc(c["arrival"]) > now  # still to come
+                    and c["arrival"] not in state.get("cmes_sent", [])]
         if state.get("change_day") != today:
             state["change_day"], state["changes_today"] = today, 0
             changed = True
         if (moved or new_cmes) and state["changes_today"] < MAX_CHANGES_PER_DAY:
             parts = [line(n, base[n["date"]]) for n in moved]
             for c in new_cmes:
-                parts.append(f"☀️ CME expected {parse_utc(c['arrival']).strftime('%a %d %b %H:%M')} UTC, Kp {c.get('kp_min')}–{c.get('kp_max')}")
+                when = (parse_utc(c["arrival"]) + timedelta(hours=LOCAL_OFFSET)).strftime("%a %d %b %H:%M")
+                parts.append(f"☀️ CME expected {when} ship time, Kp {c.get('kp_min')}–{c.get('kp_max')}")
             up = sum(n["score"] - base[n["date"]]["score"] for n in moved)
             focus = max(moved, key=lambda n: abs(n["score"] - base[n["date"]]["score"]))["date"] if moved else best and best["date"]
             send(f"{'📈' if up >= 0 else '📉'} Aurora outlook changed", " · ".join(parts),

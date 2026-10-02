@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 
 from common import (CONFIG, DATA, UA, Route, fetch_hp30, haversine_km, http_get_json, iso, kp_required,
                     load_json, mag_lat, parse_utc, save_json, sun_alt, utcnow)
+from update import tonight_answer
 
 DASHBOARD = "https://zoltanhorogh.github.io/aurora/"
 SWPC = "https://services.swpc.noaa.gov"
@@ -42,13 +43,9 @@ TEST_MAX_PER_NIGHT = 2
 
 
 def global_readings():
-    """Readings that are the same everywhere: Kp, Hp30, solar wind, the OVATION grid."""
+    """Readings that are the same everywhere: Hp30, solar wind, the OVATION grid. (No NOAA 1-minute Kp: it drops
+    to ~0 at the start of every 3-hour block, e.g. 0.0 while Hp30 was 2.0 on 1 Oct 2026.)"""
     out = {}
-    try:
-        kp = http_get_json(f"{SWPC}/json/planetary_k_index_1m.json")
-        out["kp"] = float(kp[-1]["estimated_kp"])
-    except Exception as e:
-        out["kp_error"] = str(e)
     try:
         # Half-hourly planetary activity: reacts to substorms faster than the 3-hourly Kp.
         hp = fetch_hp30(utcnow() - timedelta(hours=24), utcnow())
@@ -125,14 +122,14 @@ def live_readings(lat, lon):
 
 
 def judge(lv, req):
-    """(activity good enough to go out, strong) for a place that needs Kp `req`."""
-    kp, bz, hp30 = lv.get("kp", 0), lv.get("bz30", 0), lv.get("hp30", 0)
+    """(activity good enough to go out, strong) for a place that needs Kp `req`; measured activity = Hp30."""
+    bz, hp30 = lv.get("bz30", 0), lv.get("hp30", 0)
     ov_l, ov_n = lv.get("ovation_local", 0), lv.get("ovation_north", 0)
     activity_ok = (ov_l >= OVATION_LOCAL_MIN
-                   or (ov_n >= OVATION_NORTH_MIN and kp >= req)
-                   or (kp >= req + 1 and bz <= BZ_SOUTH)
+                   or (ov_n >= OVATION_NORTH_MIN and hp30 >= req)
+                   or (hp30 >= req + 1 and bz <= BZ_SOUTH)
                    or hp30 >= req + 1.5)
-    strong = ov_l >= 50 or kp >= req + 3 or hp30 >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
+    strong = ov_l >= 50 or hp30 >= req + 3 or (bz <= -10 and lv.get("speed", 0) >= 500)
     return activity_ok, strong
 
 
@@ -199,7 +196,7 @@ def test_season(now, route, dry):
         sky = ("clouds ?" if cloud is None else f"clouds {cloud}% ✓ would alert on board" if cloud <= CLOUD_MAX
                else f"cloudy {cloud}% ✕")
         lines.append(f"{st['name']} (needs Kp ≈{req:.1f}): {sky}{mag_note}")
-    live = [f"Kp {g['kp']:.1f}" if "kp" in g else "", f"Hp30 {g['hp30']:.1f}" if "hp30" in g else "",
+    live = [f"Hp30 {g['hp30']:.1f}" if "hp30" in g else "",
             f"Bz {g['bz30']:+.1f} nT" if "bz30" in g else "", f"wind {g['speed']} km/s" if "speed" in g else ""]
     title = "🧪 TEST · 🔥 Strong aurora activity" if level == "strong" else "🧪 TEST · 🟢 Aurora active"
     send(title, "\n".join(lines) + "\nLive: " + " · ".join(x for x in live if x),
@@ -233,10 +230,8 @@ def send(title, message, priority=4, tags=None, dry=False, click=DASHBOARD):
 
 def fmt_live(lv, req):
     parts = []
-    if "kp" in lv:
-        parts.append(f"Kp now {lv['kp']:.1f} (needed here ≈{req:.0f})")
     if "hp30" in lv:
-        parts.append(f"Hp30 {lv['hp30']:.1f}")
+        parts.append(f"Hp30 {lv['hp30']:.1f} measured ({req:.1f} needed here)")
     if "bz30" in lv:
         parts.append(f"Bz {lv['bz30']:+.1f} nT" + (" (south ✓)" if lv["bz30"] <= BZ_SOUTH else ""))
     if "speed" in lv:
@@ -246,6 +241,36 @@ def fmt_live(lv, req):
     if "cloud" in lv:
         parts.append(f"clouds {lv['cloud']}% ({lv.get('cloud_src', '')})")
     return " · ".join(parts)
+
+
+def save_hp30(now):
+    """Fresh Hp30 for the page's live tile, every run before and during the cruise (it used to be written only on
+    board after dark, so before the cruise the page's "now" could be 3-4 hours old)."""
+    try:
+        series = [[iso(t), v] for t, v in fetch_hp30(now - timedelta(hours=24), now)]
+    except Exception as e:  # the page falls back to latest.json
+        print("hp30 failed:", e)
+        return
+    prev = load_json(DATA / "hp30.json", {}) or {}
+    if series and (not prev.get("series") or prev["series"][-1] != series[-1]):
+        save_json(DATA / "hp30.json", {"updated": iso(now), "series": series}, compact=True)
+
+
+def briefing(n, now):
+    """The evening outlook in the words of the page's Basic Tonight card (update.tonight_answer)."""
+    ans = tonight_answer(n, now)
+    ev = {e["kind"]: e["local"] for e in n.get("events", [])}
+    kps = [h["kp"] for h in n["hourly"] if h["dark"]]
+    lo, hi = (f"{min(kps):.1f}", f"{max(kps):.1f}") if kps else (None, None)
+    kp = f"Kp {lo if lo == hi else f'{lo}–{hi}'} tonight, {n['kp_req']:.1f} needed here" if kps else ""
+    if ans["verdict"] == "far":
+        head, sky = f"{round(n['score'] * 100)}% chance", "hour-by-hour clouds not forecast yet"
+    else:
+        head = f"{ans['verdict']} {ans['window']}" if ans["window"] else "NO"
+        c = ans["cloud"]
+        sky = (f"{c[0]}% cloud" if c[0] == c[1] else f"{c[0]}–{c[1]}% cloud") + " in the dark hours (MET Norway)" if c else ""
+    dark = f"dark {ev.get('dark_start', n['dark']['start'])}–{ev.get('dark_end', n['dark']['end'])}"
+    return f"🌌 Tonight: {head}", " · ".join(x for x in (n["place"], kp, sky, dark) if x)
 
 
 def main():
@@ -269,6 +294,8 @@ def main():
              priority=3, tags=["white_check_mark"], dry=args.dry_run)
         return
 
+    if not args.dry_run:
+        save_hp30(now)
     if now < route.start - timedelta(hours=6):
         test_season(now, route, args.dry_run)
         return
@@ -276,7 +303,8 @@ def main():
         print("after the cruise — nothing to do")
         return
 
-    state = load_json(DATA / "alert_state.json", {"last_alert": None, "last_level": None, "briefings": []})
+    state = load_json(DATA / "alert_state.json", {}) or {}
+    state.setdefault("briefings", [])  # the file from the test season has no such key: KeyError at 17:00 on board
     changed = False
     local = now + timedelta(hours=SHIP_UTC_OFFSET)
 
@@ -286,14 +314,8 @@ def main():
         latest = load_json(DATA / "latest.json", {}) or {}
         n = next((x for x in latest.get("nights", []) if x["date"] == today), None)
         if n:
-            cloud = n["clear"].get("mean_cloud_dark")
-            msg = (f"{n['place']} · chance {round(n['score'] * 100)}% ({n['rating']}). "
-                   f"Dark {n['dark']['start']}–{n['dark']['end']}. "
-                   f"Clear-sky chance {round(n['clear']['p'] * 100)}%"
-                   + (f", forecast cloud ≈{cloud:.0f}%" if cloud is not None else "")
-                   + f". Activity {round(n['activity']['p'] * 100)}%. " + " ".join(n["notes"][:2]))
-            send(f"🌌 Tonight's aurora outlook: {n['rating']}", msg, priority=3, tags=["crescent_moon"],
-                 dry=args.dry_run, click=tonight_link(now))
+            title, msg = briefing(n, now)
+            send(title, msg, priority=3, tags=["crescent_moon"], dry=args.dry_run, click=tonight_link(now))
             state["briefings"].append(today)
             changed = True
 
@@ -303,11 +325,6 @@ def main():
         lv = live_readings(pos["lat"], pos["lon"])
         cloud = lv.get("cloud")
         activity_ok, strong = judge(lv, req)
-        # Keep a fresh Hp30 series for the dashboard's live tile (committed by the workflow).
-        if lv.get("hp30_series") and not args.dry_run:
-            prev = load_json(DATA / "hp30.json", {}) or {}
-            if not prev.get("series") or prev["series"][-1] != lv["hp30_series"][-1]:
-                save_json(DATA / "hp30.json", {"updated": iso(now), "series": lv["hp30_series"]}, compact=True)
         sky_ok = cloud is not None and cloud <= CLOUD_MAX
         print(f"{iso(now)} {pos['place']} sun {sa:.1f} req {req:.1f} activity_ok={activity_ok} "
               f"strong={strong} sky_ok={sky_ok} live={ {k: v for k, v in lv.items() if k != 'hp30_series'} }")

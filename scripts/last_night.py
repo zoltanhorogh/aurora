@@ -7,9 +7,11 @@ finished when its darkness ends in Tromsø (same rule as the page). Output: data
 """
 from datetime import datetime, timedelta
 
-from common import DATA, TROMSO, UTC, darkness_end, fetch_hp30, iso, load_json, parse_utc, save_json, utcnow
+from common import (DATA, TROMSO, UTC, darkness_end, fetch_hp30, iso, kp_required, load_json, mag_lat, parse_utc,
+                    save_json, utcnow)
 
 LOCAL_OFFSET = 2
+NEED = round(kp_required(mag_lat(*TROMSO)), 1)  # Kp (and Hp30) needed in Tromsø, as on the page
 CAMS = {"tromso": "Tromsø", "skibotn": "Skibotn", "kiruna": "Kiruna"}
 
 
@@ -114,9 +116,11 @@ def headline(o):
         return "Aurora on the cameras: " + ", ".join(f"{c['name']} {hour_span(c['aurora'])}" for c in seen)
     if maybe:
         return "Possible aurora on the cameras (bright sky): " + ", ".join(f"{c['name']} {hour_span(c['possible'])}" for c in maybe)
-    if mag_min <= -50 or o.get("hp30", {}).get("max", 0) >= 2:
-        return "Active night, but no camera saw aurora (cloud or moon)"
-    return "Quiet night"
+    hp = o.get("hp30", {}).get("max")
+    if mag_min <= -50 or (hp is not None and hp >= NEED):
+        what = f"Hp30 max {hp:.1f}, {NEED} needed in Tromsø" if hp is not None and hp >= NEED else f"magnetometer {mag_min} nT"
+        return f"Activity was enough ({what}), but no camera saw aurora (clouds or moon)"
+    return f"Too quiet even for Tromsø (Hp30 max {hp:.1f}, {NEED} needed)" if hp is not None else "Quiet night"
 
 
 def text_line(o):
@@ -127,7 +131,7 @@ def text_line(o):
         parts.append(f"magnetometer {m['name']} {m['min']} nT at {m['at']}")
     known = [c for c in o["clouds"] if c["clear_dark"] is not None]
     if known:
-        parts.append(", ".join(f"{c['spot']} " + (f"clear {c['clear_dark'][0]}–{c['clear_dark'][-1]}" if c["clear_dark"] else "cloudy")
+        parts.append(", ".join(f"{c['spot']} " + (f"clear {hour_span([h[:2] for h in c['clear_dark']])}" if c["clear_dark"] else "cloudy")
                                for c in known))
     return "Last night: " + "; ".join(parts)
 

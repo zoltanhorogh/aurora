@@ -41,7 +41,9 @@ SITE_FILES = ["index.html", "sw.js", "manifest.webmanifest"]
 INJECT = r"""<script>
 (() => {
   const P = new URLSearchParams(location.search);
-  try { localStorage.setItem('aurora-mode', 'advanced'); } catch (e) { /* ignore */ } // the click-through checks the full page first
+  try { localStorage.setItem('aurora-mode', P.get('mode') || 'advanced'); } catch (e) { /* ignore */ } // the click-through checks the full page first
+  // a reload: the position the page had (kept per tab)
+  if (P.get('scroll')) try { sessionStorage.setItem('aurora-scroll', JSON.stringify({ y: +P.get('scroll'), mode: P.get('mode') || 'advanced' })); } catch (e) { /* ignore */ }
   const OFF = +(P.get('clock') || 0) * 1000;
   if (OFF) {
     const R = Date;
@@ -101,14 +103,19 @@ INJECT = r"""<script>
       const bad = text.match(/undefined|NaN|\bnull\b|Infinity|\[object /);
       check(`${label}: no undefined/NaN in the text`, !bad, bad && bad[0]);
       check(`${label}: no "1 days"`, !/\b1 days\b/.test(text));
-      if (ranges) { const r = text.match(/\b(\d\d:\d\d)–\1(?!\d)/); check(`${label}: no X–X time range`, !r, r && r[0]); }
+      const z = text.match(/≈0(?![.\d])|\b0\.0 needed/);
+      check(`${label}: no need rounded to 0`, !z, z && z[0]);
+      if (ranges) {
+        const r = text.match(/\b(\d\d:\d\d)–\1(?!\d)|\b(\d\d)–\2\b/);
+        check(`${label}: no X–X time range`, !r, r && r[0]);
+      }
     };
     // advanced (the injected default mode)
     const kicker = (document.querySelector('#hero .kicker') || {}).textContent || '';
     const heroDate = /tonight/i.test(kicker) ? ((document.querySelector('#hero .when') || {}).textContent || '').split(' · ')[0] : null;
     const pastDates = $$('#night-cards .night.past .d').map((d) => d.textContent.replace('PAST', '').trim());
     if (heroDate) check('advanced: tonight is not also a PAST card', !pastDates.includes(heroDate), heroDate);
-    lint('advanced', document.querySelector('main').textContent, false);
+    lint('advanced', document.querySelector('main').textContent, true);
     // basic
     document.querySelector('#mode button[data-mode="basic"]').click();
     await sleep(300);
@@ -138,6 +145,19 @@ INJECT = r"""<script>
 
   async function run() {
     for (let i = 0; i < 150 && !document.querySelector('#night-cards .night'); i++) await sleep(200);
+    // links and reloads: where the page lands (no click-through in these scenarios)
+    const ex = P.get('expect');
+    if (ex === 'deeplink' || ex === 'hash' || ex === 'restore') {
+      await sleep(1800);
+      const hdr = document.querySelector('.topbar').offsetHeight;
+      const at = (s) => Math.round(document.querySelector(s).getBoundingClientRect().top);
+      if (ex === 'deeplink') check('a notification link to another night opens it in the advanced view, and only once',
+        !document.body.classList.contains('basic-mode') && Math.abs(at('#night-detail') - (hdr + 8)) <= 6 && !/night=/.test(location.href), `${at('#night-detail')} / ${location.href}`);
+      if (ex === 'hash') check('a #section link lands under the header and leaves the address',
+        Math.abs(at('#live') - (hdr + 8)) <= 6 && !location.hash, `${at('#live')} / ${location.hash}`);
+      if (ex === 'restore') check('a reload stays where the page was', Math.abs(window.scrollY - +P.get('scroll')) <= 10, `scrollY ${Math.round(window.scrollY)}`);
+      return finish();
+    }
     check('night cards rendered', $$('#night-cards .night').length > 0);
     const n = $$('#night-cards .night').length;
     for (let i = 0; i < n; i++) {
@@ -229,7 +249,7 @@ INJECT = r"""<script>
       const vt = windowCheck(b);
       if (P.get('expect') === 'nowindow') {
         const sky = [...b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf')].map((x) => x.textContent).join(' | ');
-        check('basic tonight: a window that is over is not the answer', vt && /^NO/.test(vt.textContent.trim()) && /Cloudy/.test(sky),
+        check('basic tonight: a window that is over is not the answer', vt && /^NO/.test(vt.textContent.trim()) && /cloudy/i.test(sky),
           `${vt ? vt.textContent.trim() : 'no verdict'} | ${sky}`);
       }
       const cell = b.querySelector('.bstrip > div');
@@ -331,6 +351,7 @@ def prepare_set(tmp, name, target, on, base_env, problems):
     for script in ("update.py", "weather.py"):
         run_script(script, [], env, problems, f"timeline {name} (cruise moved {days} days)")
     record_sources(data, f"timeline {name}")
+    data_invariants(data, f"timeline {name}", problems)
     return data, env
 
 
@@ -349,7 +370,8 @@ def notify_check(env, data_dir, now_utc, label, problems):
         d = datetime.fromisoformat(n["date"])
         ends[d.strftime("%a %d %b")] = ends[d.strftime("%a %d")] = night_end(n)
     msgs = re.findall(r'"message": "(.*?)",\n', r.stdout)
-    for m in re.finditer(r"\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d\d)( (?:Sep|Oct|Nov))?\b", " ".join(msgs)):
+    text = re.sub(r"☀️ CME expected [^·]*", "", " ".join(msgs))  # a CME's arrival date is not a night
+    for m in re.finditer(r"\b((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d\d)( (?:Sep|Oct|Nov))?\b", text):
         key = m.group(1) + (m.group(2) or "")
         if key in ends and ends[key] <= now_utc:
             problems.append(f"{label}: notification mentions {key}, a night that is over: {' '.join(msgs)[:200]}")
@@ -440,6 +462,9 @@ def make_past_window(latest):
             h.update(cloud_met=5.0, cloud_past=True, p_act=0.9)  # over: clear and strong (a GO stretch)
         else:
             h.update(cloud_met=95.0)  # still to come: overcast
+    ahead = [h for h in n["hourly"] if h["dark"] and datetime.fromisoformat(h["t"].replace("Z", "+00:00")) + timedelta(hours=1) > clock]
+    if len(ahead) >= 2:
+        ahead[-1].update(cloud_met=5.0, p_act=0.9)  # one single clear hour still to come: no window either (2-hour rule)
     return clock
 
 
@@ -457,6 +482,28 @@ def check_tonight_answer(problems):
         problems.append(f"update.tonight_answer answers with a window that is over: {ans['verdict']} {ans['window']}")
 
 
+# Notification texts say the same as the page: measured activity = Hp30, the need with a decimal, ship time.
+MSG_LINT = [(re.compile(r"≈0(?![.\d])"), "a need rounded to 0"), (re.compile(r"\bKp now\b"), "the NOAA 1-minute Kp"),
+            (re.compile(r"\d\d:\d\d UTC\b"), "a time in UTC")]
+
+
+def lint_messages(out, label, problems):
+    for msg in re.findall(r'"(?:title|message)": "(.*?)",\n', out):
+        for rx, what in MSG_LINT:
+            if rx.search(msg):
+                problems.append(f"{label}: notification text has {what}: {msg[:160]}")
+
+
+def data_invariants(data_dir, label, problems):
+    """What the pipeline must never write (checked on its runs with the new code)."""
+    latest = json.loads((data_dir / "latest.json").read_text(encoding="utf-8"))
+    gen = datetime.fromisoformat(latest["generated"].replace("Z", "+00:00"))
+    early = [r["t"] for r in latest["space_weather"]["kp_3day"]
+             if r["kind"] == "estimated" and datetime.fromisoformat(r["t"].replace("Z", "+00:00")) > gen]
+    if early:
+        problems.append(f"{label}: NOAA blocks that have not started are kept as 'estimated' (measured): {early[:2]}")
+
+
 def run_script(name, args, env, problems, label):
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / name), *args], cwd=ROOT / "scripts", env=env,
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900)
@@ -464,6 +511,8 @@ def run_script(name, args, env, problems, label):
     print(f"  {'ok ' if ok else 'FAIL'} {label}: {name} {' '.join(args)}")
     if not ok:
         problems.append(f"{label}: {name} exited {r.returncode}: {(r.stderr or r.stdout).strip()[-800:]}")
+    if name in ("alert.py", "notify.py"):
+        lint_messages(r.stdout, f"{label}: {name}", problems)
 
 
 def page_check(chrome, url, profile):
@@ -521,6 +570,13 @@ def main():
         if clock_pw:
             pw.write_text(json.dumps(latest_pw, ensure_ascii=False), encoding="utf-8")
             scenarios.append(("tonight: the window is over, overcast after", "pastwin", int((clock_pw - now).total_seconds()), "&expect=nowindow"))
+        # links from notifications and reloads (the address must not keep a link: Safari jumped there on every reload)
+        dates = [n["date"] for n in latest_pw["nights"]]
+        today = ship_today()
+        other = next(d for d in (dates[-1], dates[0]) if d not in ((today - timedelta(days=1)).isoformat(), today.isoformat()))
+        scenarios += [("notification link to another night", "now", 0, f"&mode=basic&night={other}&expect=deeplink"),
+                      ("notification link to a section", "now", 0, "&mode=basic&expect=hash#live"),
+                      ("reload keeps the position", "now", 0, "&scroll=1500&expect=restore")]
         it = json.loads((ROOT / "config" / "itinerary.json").read_text(encoding="utf-8"))
         tos = next(s for s in it["stops"] if s.get("id") == "TOS")
         in_tromso = datetime.fromisoformat(tos["arrive"].replace("Z", "+00:00")) + timedelta(hours=11)
@@ -550,6 +606,11 @@ def main():
             if not here or not here.get("series"):
                 problems.append(f"{label}: weather.json has no 'here' forecast (Basic weather card would be empty)")
             record_sources(data_ship, label)
+            data_invariants(data_ship, label, problems)
+            # the evening outlook on board (17-19 h ship time: crashed on a missing key until 1 Oct) and the test message
+            evening = slot_clock(0, 18)
+            run_script("alert.py", ["--dry-run", "--now", evening.strftime("%Y-%m-%dT%H:%M:%SZ")], env, problems, label + ", 18:00")
+            run_script("alert.py", ["--dry-run", "--test"], env, problems, label)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [

@@ -714,6 +714,7 @@ def tonight_answer(n, now):
     st = [hour_verdict(h) for h in n["hourly"]]
     # Hours that are over keep their clouds (carry_past_clouds), but a window that is over is no answer
     # for tonight any more: only stretches with an hour still to come count, weighted by those hours.
+    # A window is at least 2 hours (the clear-gap rule everywhere); a "maybe" window may include "go" hours.
     ahead = [parse_utc(h["t"]) + timedelta(hours=1) > now for h in n["hourly"]]
 
     def worth(r):
@@ -723,15 +724,16 @@ def tonight_answer(n, now):
         return sum(AURORA_BY_UT.get(parse_utc(n["hourly"][k]["t"]).hour, 30) / 100 for k in idx)
 
     for want in ("GO", "TRY"):
+        ok = ("GO",) if want == "GO" else ("GO", "TRY")
         runs, i = [], 0
         while i < len(st):
-            if st[i] != want:
+            if st[i] not in ok:
                 i += 1
                 continue
             j = i
-            while j + 1 < len(st) and st[j + 1] == want:
+            while j + 1 < len(st) and st[j + 1] in ok:
                 j += 1
-            if ahead[j]:
+            if j > i and ahead[j]:
                 runs.append((i, j))
             i = j + 1
         best = None
@@ -775,6 +777,9 @@ def main():
     clim = (load_json(DATA / "climatology.json", {}) or {}).get("nights", {})
 
     kp3 = fetch_kp_3day() or []
+    for r in kp3:  # NOAA calls even 3-hour blocks that have not started "estimated": they are still a forecast
+        if r["kind"] == "estimated" and parse_utc(r["t"]) > now:
+            r["kind"] = "predicted"
     kp27 = fetch_27day() or {"issued": None, "days": []}
     weekly = fetch_weekly() or {}
     three = fetch_3day_text() or {}

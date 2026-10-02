@@ -31,7 +31,7 @@
     const s = eventAt(n, 'sunset'), a = eventAt(n, 'dark_start'), b = eventAt(n, 'dark_end');
     return (s ? `sunset ${s.local} · ` : '') + `dark ${a ? a.local : n.dark.start}–${b ? b.local : n.dark.end}`;
   };
-  const kpNeedText = (k) => (k < 1 ? 'even quiet activity (Kp 0–1) is enough here' : `needs about Kp ${k.toFixed(0)}+ here`);
+  const kpNeedText = (k) => (k < 1 ? `even quiet activity is enough here (Kp ${k.toFixed(1)} needed)` : `needs about Kp ${k.toFixed(0)}+ here`);
   const ago = (t) => {
     const m = (Date.now() - new Date(t)) / 60000;
     if (m < 60) return Math.max(1, Math.round(m)) + ' min ago';
@@ -51,6 +51,22 @@
   let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
   let selected = null;
   let bzPts = null;  // loaded on demand
+
+  // Reloading keeps the place you were at (this tab only). A link's #section or ?night= (from a notification) is used
+  // once and then taken out of the address: otherwise every reload jumped there again, and too early, while the
+  // content above it was still loading (Safari, 1 Oct 2026: "always jumps to the nights").
+  try { history.scrollRestoration = 'manual'; } catch { /* old browsers */ }
+  const LINK = (() => {
+    const q = new URLSearchParams(location.search);
+    const link = { night: q.get('night'), hash: location.hash.length > 1 ? location.hash : '' };
+    if (link.night || link.hash) {
+      q.delete('night');
+      try { history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : '')); } catch { /* ignore */ }
+    }
+    return link;
+  })();
+  const SCROLL_KEY = 'aurora-scroll';
+  const saveScroll = () => { try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ y: Math.round(window.scrollY), mode: MODE })); } catch { /* private mode */ } };
 
   async function getJSON(url) {
     const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
@@ -205,7 +221,9 @@
   };
   const isPast = (n) => Date.now() >= nightEnd(n);
   const CAMS = [['tromso', 'Tromsø camera', 69.65, 18.96], ['skibotn', 'Skibotn camera', 69.35, 20.36], ['kiruna', 'Kiruna camera', 67.84, 20.41]];
-  const span = (arr) => (arr.length ? `${arr[0]}–${arr[arr.length - 1]}` : '');
+  // Whole hours as ranges, gaps kept: ["21:00", "22:00", "00:00"] or ["21", "22", "00"] -> "21–23, 00–01"
+  const span = (arr) => arr.map((h) => String(h).slice(0, 2)).reduce((g, h) => ((g.length && (+g[g.length - 1][g[g.length - 1].length - 1] + 1) % 24 === +h)
+    ? (g[g.length - 1].push(h), g) : [...g, [h]]), []).map((x) => `${x[0]}–${pad((+x[x.length - 1] + 1) % 24)}`).join(', ');
   // One word for an hour of the camera AI log ("bright" = moonlit sky the AI calls dusk/dawn).
   const camWord = (v) => (v.aurora >= 50 ? 'aurora' : (v.bright || 0) >= 30 ? 'possible aurora' : v.dusk >= 50 ? 'bright (moon)'
     : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed');
@@ -235,7 +253,7 @@
       : c.possible.length ? `<span class="ok">possible aurora ${hs(c.possible)}</span> <span class="why">(bright sky)</span>`
       : c.cloudy * 2 >= c.checked ? 'cloudy' : c.bright * 2 >= c.checked ? 'bright sky (moon)' : c.clear ? 'clear, no aurora' : 'mixed'}`).join(' · ');
     const clouds = (L.clouds || []).map((c) => `${esc(c.spot)}: ${c.clear_dark == null ? '<span class="why">MET analysis after the morning update</span>'
-      : c.clear_dark.length ? `<span class="ok">clear ${c.clear_dark[0]}–${c.clear_dark[c.clear_dark.length - 1]}</span>` : 'cloudy all night'}`).join(' · ');
+      : c.clear_dark.length ? `<span class="ok">clear ${span(c.clear_dark)}</span>` : 'cloudy all night'}`).join(' · ');
     const alerts = (L.alerts || []).map((a) => `${a.kind}${a.count > 1 ? ` ×${a.count}` : ''} (${a.last})`).join(' · ');
     const row = (k, v) => (v ? `<div class="ln-row"><span class="k">${k}</span><span>${v}</span></div>` : '');
     el.style.display = '';
@@ -400,11 +418,13 @@
     for (const want of ['GO', 'TRY']) {
       const runs = [];
       let i = 0;
+      // a window is at least 2 hours (the clear-gap rule everywhere); a "maybe" window may include "go" hours
+      const ok = (s) => s === want || (want === 'TRY' && s === 'GO');
       while (i < st.length) {
-        if (st[i] !== want) { i++; continue; }
+        if (!ok(st[i])) { i++; continue; }
         let j = i;
-        while (j + 1 < st.length && st[j + 1] === want) j++;
-        if (hourAhead(n.hourly[j])) runs.push([i, j]);
+        while (j + 1 < st.length && ok(st[j + 1])) j++;
+        if (j > i && hourAhead(n.hourly[j])) runs.push([i, j]);
         i = j + 1;
       }
       if (!runs.length) continue;
@@ -674,7 +694,8 @@
   // ------------------------------------------------------------ Kp charts
   function kpRefLines(y, x0, x1) {
     let g = '';
-    for (const [v, lab] of [[1, 'Tromsø/Alta need ≈1'], [3, 'Trondheim/Ålesund ≈3'], [5, 'G1 storm']]) {
+    const tos = kpNeedAt(69.65, 18.96), alta = kpNeedAt(69.98, 23.25); // the same numbers as "needed here" everywhere
+    for (const [v, lab] of [[tos, `needed: Tromsø ≈${tos.toFixed(1)}, Alta ≈${alta.toFixed(1)}`], [3, 'Trondheim/Ålesund ≈3'], [5, 'G1 storm']]) {
       g += `<line x1="${x0}" x2="${x1}" y1="${y(v)}" y2="${y(v)}" stroke="#777" stroke-dasharray="3 4"/>`;
       g += `<text class="ref" x="${x1 - 2}" y="${y(v) - 4}" text-anchor="end">${lab}</text>`;
     }
@@ -1424,7 +1445,7 @@
   function verificationTable() {
     const recs = VER && VER.nights ? Object.values(VER.nights).filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.spot.localeCompare(b.spot))) : [];
     if (!recs.length) return '';
-    const hoursTxt = (arr) => (arr && arr.length ? `${arr[0]}–${arr[arr.length - 1]} (${arr.length} h)` : 'none');
+    const hoursTxt = (arr) => (arr && arr.length ? `${span(arr)} (${arr.length} h)` : 'none');
     const LEADS = [['forecast_2d', '2 days before'], ['forecast_1d', '1 day before'], ['forecast', 'Same evening']];
     // Did a recorded forecast get the clouds right? null when not recorded.
     const judge = (r, key) => {
@@ -1439,7 +1460,7 @@
       const lines = LEADS.map(([key, label]) => {
         const j = judge(r, key);
         if (!j) return '';
-        const win = j.good.length ? `${j.good[0]}–${j.good[j.good.length - 1]}` : 'no window';
+        const win = j.good.length ? span(j.good) : 'no window';
         return `<div><span class="why">${label}:</span> ${pct(j.f.score)} ${j.f.rating} · ${win} ${j.ok ? '<span class="ok">✓</span>' : '<span class="why">✕</span>'}</div>`;
       }).join('');
       return lines || '<span class="why">not recorded</span>';
@@ -1463,7 +1484,7 @@
     };
     const row = (r) => {
       const o = r.observed;
-      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${o.clear_twilight.join(', ')}</span>` : ''}</td><td>${camCell(r)}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
+      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${span(o.clear_twilight)}</span>` : ''}</td><td>${camCell(r)}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
     };
     const score = (key) => {
       const js = recs.map((r) => judge(r, key)).filter(Boolean);
@@ -1573,6 +1594,7 @@
   const WX_ICON = (sym) => (sym ? `<img class="wxi" src="https://cdn.jsdelivr.net/gh/metno/weathericons@main/weather/svg/${encodeURIComponent(sym)}.svg" alt="${esc(sym.replace(/_/g, ' '))}" loading="lazy">` : '');
   const r1 = (v) => (v == null ? '–' : (Math.round(v * 10) / 10).toString());
   const r0 = (v) => (v == null ? '–' : Math.round(v).toString());
+  const r0range = (a, b) => (r0(a) === r0(b) ? r0(a) : `${r0(a)}–${r0(b)}`); // never "13–13"
   const kmh = (ms) => (ms == null ? '–' : Math.round(ms * 3.6).toString()); // MET gives m/s
   const LEVEL_CLS = (lvl) => (/red/.test(lvl || '') ? 'critical' : /orange/.test(lvl || '') ? 'serious' : 'warn');
 
@@ -1593,7 +1615,7 @@
   const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
     <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind</th><th>Rain</th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
     <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain in mm${compact ? '' : ', chance in %'} · UV index for a clear sky: 3+ = use sunscreen</div>`;
-  const wxSummaryLine = (s) => (s ? `${r0(s.t_min)}–${r0(s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
+  const wxSummaryLine = (s) => (s ? `${r0range(s.t_min, s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
   // At sea: waves, swell and wind every 3 h at the ship's planned position, per sea leg.
@@ -1660,7 +1682,7 @@
     const portDay = p.series.length
       ? `<div class="wx-sum">${wxSummaryLine(p.summary)}</div>${adviceChips(p.advice)}${wxTable(p.series, lat)}`
       : `<div class="wx-sum">No forecast for this day yet: MET Norway reaches it about 9 days before (6-hourly), hourly from about 2.5 days before.</div>
-         ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0(c.temp_min_mean)}–${r0(c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${kmh(c.wind_mean)} km/h, gusts up to ~${kmh(c.gust_p90)} km/h</div></div>
+         ${c ? `<div class="farbox"><div class="fb"><div class="k">Typical for this day (2011–2025)</div><div class="v">${r0range(c.temp_min_mean, c.temp_max_mean)} °C</div><div class="s">feels about ${r0(c.feels_mean)} °C on average · wind ${kmh(c.wind_mean)} km/h, gusts up to ~${kmh(c.gust_p90)} km/h</div></div>
          <div class="fb"><div class="k">Rain or snow</div><div class="v">${Math.round(c.wet_hours_share * 100)}% of hours</div><div class="s">${c.snow_share_of_wet > 0.05 ? `${Math.round(c.snow_share_of_wet * 100)}% of those as snow/sleet` : 'almost always rain, not snow'}</div></div></div>` : ''}`;
     const sea = p.sea ? `<div class="wx-sea"><b>Water shuttle (tender), ${esc(p.sea.label)}:</b> ${p.sea.wave_max != null ? `waves up to ${r1(p.sea.wave_max)} m · sea ${r1(p.sea.sst)} °C · ${esc(p.sea.risk)}` : 'sea forecast not available for this day yet (about 8 days ahead)'}</div>` : '';
     const inPort = Date.now() >= new Date(p.window[0]).getTime() - 2 * 3600e3 && Date.now() <= new Date(p.window[1]).getTime();
@@ -1712,6 +1734,16 @@
   }
   const yOf = (el) => () => Math.max(0, el.getBoundingClientRect().top + window.scrollY - headerOffset()); // 8 px below the header
 
+  // Put the page at a spot once it is built, again when late content (charts, pictures) has grown above it;
+  // a touch or the wheel in between means the user took over.
+  function settle(getY) {
+    let userMoved = false;
+    const stop = () => { userMoved = true; };
+    window.addEventListener('touchstart', stop, { once: true, passive: true });
+    window.addEventListener('wheel', stop, { once: true, passive: true });
+    for (const ms of [0, 250, 1200]) setTimeout(() => { if (!userMoved) window.scrollTo({ top: getY(), behavior: 'instant' }); }, ms);
+  }
+
   function navSpy() {
     trackHeader();
     document.querySelectorAll('#tabs a').forEach((a) => a.addEventListener('click', (ev) => {
@@ -1719,8 +1751,7 @@
       if (!el) return;
       ev.preventDefault();
       if (a.getAttribute('href') === '#check') { const p = $('#check-panel'); if (!p.open) p.open = true; }
-      scrollToY(yOf(el));
-      history.replaceState(null, '', location.pathname + location.search + a.getAttribute('href'));
+      scrollToY(yOf(el)); // no #section in the address: a reload would jump there instead of staying put
     }));
     $('#home').addEventListener('click', (ev) => {
       ev.preventDefault();
@@ -1750,7 +1781,7 @@
   }
   function setMode(m, then) {
     MODE = m;
-    try { localStorage.setItem('aurora-mode', m); } catch { /* ignore */ }
+    try { localStorage.setItem('aurora-mode', m); } catch { /* ignore */ } // the choice is remembered on this device
     applyMode();
     window.scrollTo({ top: 0, behavior: 'instant' });
     if (then) setTimeout(then, 50);
@@ -1804,12 +1835,16 @@
       sky = inWin.every((h) => h.cloud_met <= CLEAR_LINE)
         ? { cls: 'ok', word: '✓ Clear gap', sub: `${range(inWin)} ${win.text}` }
         : { cls: 'mid', word: 'Partly cloudy', sub: `${range(inWin)} ${win.text}` };
-    } else if (clearH) {
+    } else if (hrs.some((h, i) => i > 0 && h.cloud_met <= CLEAR_LINE && hrs[i - 1].cloud_met <= CLEAR_LINE && new Date(h.t) - new Date(hrs[i - 1].t) === 3600e3)) {
       sky = { cls: 'ok', word: '✓ Clear', sub: `${clearH} of ${hrs.length} dark hours ≤40% cloud${hrs.length < all.length ? ' still to come' : ''}` };
+    } else if (clearH) {
+      // single clear hours only: no 2-hour gap, so no window (the clear-gap rule everywhere on the page)
+      sky = { cls: 'mid', word: 'Mostly cloudy', sub: `only single clear hours: ${span(hrs.filter((h) => h.cloud_met <= CLEAR_LINE).map((h) => h.local))}` };
     } else {
       sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} ${rest}` : 'no clear hour' };
     }
-    const line = aur.cls === 'ok' && sky.cls === 'bad' ? 'The aurora is there, the clouds hide it.'
+    const line = !win && sky.word === 'Mostly cloudy' ? 'Only single clear hours: a short gap at best, no clear stretch.'
+      : aur.cls === 'ok' && sky.cls === 'bad' ? 'The aurora is there, the clouds hide it.'
       : aur.cls === 'bad' && sky.cls === 'ok' ? 'Clear sky, but the aurora is too weak here.'
       : aur.cls === 'bad' && sky.cls === 'bad' ? 'Weak activity and cloudy.'
       : sky.cls === 'mid' ? 'Gaps in the clouds are possible: worth a look outside.'
@@ -1932,10 +1967,14 @@
       }
       return ['quiet', 'Quiet', `magnetometer ${esc(st.name)} calm`];
     }
-    const hp = HP30 && HP30.length ? HP30[HP30.length - 1][1] : null;
+    // only a fresh value is "now" (Hp30 comes ~30 min after its half hour; older than 2 hours = not now)
+    const lastHp = HP30 && HP30.length ? HP30[HP30.length - 1] : null;
+    const hp = lastHp && Date.now() - new Date(lastHp[0]) <= 120 * 60e3 ? lastHp[1] : null;
     const lvl = hp ?? -9;
-    const txt = lvl > -9 ? `Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}` : 'live data loading…';
+    const txt = lvl > -9 ? `Hp30 ${lvl.toFixed(1)}, needed here ≈${need.toFixed(1)}`
+      : lastHp ? `no fresh Hp30 (last one for ${hm(new Date(lastHp[0]))})` : 'live data loading…';
     if (lvl >= need + 1.5 || (LIVE.ov || 0) >= 20) return ['active', 'Active', txt];
+    if (lvl === -9) return ['quiet', 'No data', txt];
     if (lvl >= need) return ['possible', 'Possible', txt];
     return ['quiet', 'Quiet', txt];
   }
@@ -2038,8 +2077,6 @@
       st.series.dev.forEach((v, i) => { const x = s0 + i * step; if (v != null && x >= t0 && x < t1 && (magMin == null || v < magMin)) magMin = v; });
     }
     const top = hpMax != null ? ['Hp30', hpMax] : kpMax != null ? ['Kp', kpMax] : null;
-    const act = [top ? `${top[1] >= 2 ? 'active' : 'quiet'} night (${top[0]} max ${top[1].toFixed(1)})` : '', magMin != null && magMin <= -50 ? `magnetometer ${magMin} nT` : '']
-      .filter(Boolean).join(', ');
     // MET's analysis of the clouds afterwards
     const obs = cruiseN ? LOG && LOG.nights && LOG.nights[date] && LOG.nights[date].observed
       : VER && VER.nights && VER.nights[`${date}|Tromsø`] && VER.nights[`${date}|Tromsø`].observed;
@@ -2047,9 +2084,15 @@
     const metDark = obs && obs.hours ? obs.hours.filter((r) => r[1] <= -12 && r[2] != null) : [];
     const metClearH = metDark.filter((r) => r[2] <= CLEAR_LINE).map((r) => r[0].slice(0, 2));
     const metCloudyH = metDark.filter((r) => r[2] > CLEAR_LINE).map((r) => r[0].slice(0, 2));
-    // at sea there is no place name to put in a sentence: talk about the ship instead
-    const atSea = /^At sea/.test(place);
-    const skyAt = atSea ? 'the sky over the ship' : place;
+    // activity that night against what this place needed (not an absolute quiet/active: Hp30 1.7 is plenty in Tromsø)
+    const needHere = obs && obs.kp_needed != null ? obs.kp_needed : kpNeedAt(lat, lon);
+    const enough = top ? top[1] >= needHere : magMin != null && magMin <= -50;
+    const act = [top ? `${top[0]} max ${top[1].toFixed(1)}: ${top[1] >= needHere ? 'enough' : 'too weak'} here (${needHere.toFixed(1)} needed)` : '',
+      magMin != null && magMin <= -50 ? `magnetometer ${magMin} nT` : ''].filter(Boolean).join(', ');
+    // at sea there is no place name to put in a sentence: talk about the ship instead; in port, the port's name
+    const atSea = /^At sea/.test(place) || !!(cruiseN && cruiseN.state === 'sea');
+    const port = place.replace(/ →.*$/, '');
+    const skyAt = atSea ? 'the sky over the ship' : port;
     // "clear" like everywhere on the page: at least 2 consecutive clear hours (a single clear hour is not a gap)
     const gap = (hh) => hh.some((h, i) => i > 0 && (+hh[i - 1].slice(0, 2) + 1) % 24 === +h.slice(0, 2));
     const clearHere = here ? gap(hereClear) : metClear ? gap(metClear) : null;
@@ -2057,7 +2100,7 @@
     const aur = hereA.length ? { cls: 'ok', word: '✓ Overhead', sub: `${here.name} camera: aurora ${span(hereA)}${act ? ' · ' + act : ''}` }
       : nearby.length ? { cls: 'mid', word: 'Seen nearby', sub: `${act ? act + ' · ' : ''}cameras: ${nearby.map((c) => `${c.name} ${span(auroraH(c))}`).join(', ')}` }
       : cams.length ? { cls: 'bad', word: 'None seen', sub: act || 'cameras saw no aurora' }
-      : { cls: 'mid', word: act ? (top && top[1] >= 2 ? 'Active' : 'Quiet') : 'No data', sub: act || 'no camera nearby' };
+      : { cls: act ? (enough ? 'ok' : 'bad') : 'mid', word: act ? (enough ? '✓ Strong enough' : '✕ Too weak') : 'No data', sub: act || 'no camera nearby' };
     const skyT = here
       ? (hereCloudy.length && !hereClear.length ? { cls: 'bad', word: '✕ Cloudy', sub: `camera: cloudy ${span(hereCloudy)}` }
         : hereClear.length && !hereCloudy.length ? { cls: 'ok', word: '✓ Clear', sub: `camera: clear ${span(hereClear)}` }
@@ -2081,7 +2124,7 @@
       : ['n', 'Not seen', 'too quiet'];
     const names = nearby.map((c) => c.name).join(' and ');
     const clearTxt = metClear && metClear.length ? `clear ${span(metClear.map((h) => h.slice(0, 2)))}` : 'clear hours';
-    const line = hereA.length ? `Aurora was out over ${place} and the camera saw it: hope you did too!`
+    const line = hereA.length ? `Aurora was out over ${port} and the camera saw it: hope you did too!`
       : nearby.length && here && hereClear.length ? `Aurora was out over ${names}, but the ${here.name} camera saw none, not even in its clear hour${hereClear.length > 1 ? 's' : ''} (${span(hereClear)}).`
       : nearby.length && clearHere === false ? `Aurora was out over ${names}, but ${skyAt} was cloudy.`
       : nearby.length && clearHere ? `Aurora was out nearby (${names}) and the sky here had clear hours: low in the north it may have been visible.`
@@ -2096,7 +2139,10 @@
     let fc = '';
     if (ev) {
       const said = ev.verdict === 'far' ? `${pct(ev.score)} chance` : `${ev.verdict}${ev.window ? ' ' + ev.window : ''}${ev.cloud ? ` (${cloudRange(ev.cloud[0], ev.cloud[1])} cloud)` : ''}`;
-      const right = clearHere == null || ev.verdict === 'far' ? '' : ((ev.verdict === 'NO') === !clearHere ? ' · <span class="ok">✓ right</span>' : ' · ✕ wrong about the clouds');
+      // judged only when the evening answer was about the clouds: GO / MAYBE = a clear gap expected,
+      // NO without a single clear hour forecast = cloudy (a NO for weak activity says nothing about the clouds)
+      const aboutClouds = ev.verdict === 'GO' || ev.verdict === 'MAYBE' || (ev.verdict === 'NO' && ev.cloud && ev.cloud[0] > CLEAR_LINE);
+      const right = clearHere == null || !aboutClouds ? '' : ((ev.verdict === 'NO') === !clearHere ? ' · <span class="ok">✓ right</span>' : ' · ✕ wrong about the clouds');
       fc = `Forecast that evening: ${esc(said)}${right}`;
     }
     const alerts = LAST && LAST.date === date && LAST.alerts && LAST.alerts.length ? LAST.alerts.map((a) => `${a.kind} ${a.last}`).join(', ') : '';
@@ -2120,7 +2166,7 @@
     const why = (i) => {
       const h = hourInfo[i];
       const near = others.filter((c) => c.hrs[h.hh]).map((c) => `${esc(c.name)} ${camWord(c.hrs[h.hh])}`).join(', ');
-      const parts = [here ? camTxt(here, here.hrs[h.hh]) : '', h.cloud != null ? `MET analysis ${atSea ? "at the ship's position" : 'for ' + esc(place)}: cloud ${Math.round(h.cloud)}%` : '',
+      const parts = [here ? camTxt(here, here.hrs[h.hh]) : '', h.cloud != null ? `MET analysis ${atSea ? "at the ship's position" : 'for ' + esc(port)}: cloud ${Math.round(h.cloud)}%` : '',
         near ? `cameras nearby: ${near}` : '',
         measChip(h.hp, h.kp, h.need), h.mag != null ? `magnetometer ${h.mag} nT` : ''].filter(Boolean);
       return `<b>${h.hh}:00</b> · ${parts.join(' · ')}`;
@@ -2139,14 +2185,14 @@
       return sunAt[hh] > -12 ? 'm' : metAt[hh] <= CLEAR_LINE ? 'cl' : 'c';
     };
     const hasStrip = !!here || Object.keys(metAt).length > 0;
-    const strips = hasStrip ? `<div class="rowlab">${esc(here ? `${here.name} camera, hour by hour` : `${atSea ? "At the ship's position" : place}: clouds afterwards (MET analysis), hour by hour`)}</div>
+    const strips = hasStrip ? `<div class="rowlab">${esc(here ? `${here.name} camera, hour by hour` : `${atSea ? "At the ship's position" : port}: clouds afterwards (MET analysis), hour by hour`)}</div>
       <div class="pstrip" data-row="0">${HOURS.map((h, i) => `<div data-i="${i}" role="button" tabindex="0">${icon(i)}<i class="${bar(h)}"></i>${h}</div>`).join('')}</div>
       <div class="bwhy" id="b-lastwhy"><span class="btap">👆 Tap an hour to see what happened</span></div>
       <div class="blegend">${here ? '<span><b class="a"></b>aurora</span>' : ''}<span><b class="cl"></b>clear${here ? ', no aurora' : ' (≤40%)'}</span><span><b class="c"></b>cloudy</span><span><b class="m"></b>${here ? 'bright (moon / twilight)' : 'twilight (too bright)'}</span></div>` : '';
     const head = `${big[1]}${big[0] === 'n' ? ' here' : ': ' + big[2]}`;
     const needM = need ?? kpNeedAt(lat, lon);
     const measured = top ? `${top[0]} max ${top[1].toFixed(1)} → ${top[1] >= needM ? 'enough' : 'below'} (${needM.toFixed(1)} needed here)` : '';
-    return { date, place, practice: !cruiseN, skyHead: atSea ? 'Sky at the ship' : `Sky in ${place}`, big, head, aur, sky: skyT, line, fc, alerts, strips,
+    return { date, place, practice: !cruiseN, skyHead: atSea ? 'Sky at the ship' : `Sky in ${port}`, big, head, aur, sky: skyT, line, fc, alerts, strips,
       here, measured, why: (i) => why(i), short: `${head} · ${line}` };
   }
 
@@ -2271,22 +2317,30 @@
       $('#hero').innerHTML = `<div class="empty">Could not load the forecast data (${esc(e.message)}). Check the connection and reload.</div>`;
       return;
     }
-    // Deep link from notifications: ?night=YYYY-MM-DD opens that night's detail.
-    const wanted = new URLSearchParams(location.search).get('night');
+    // Deep link from notifications: ?night=YYYY-MM-DD opens that night's detail, #live a section (used once, see LINK).
+    const wanted = LINK.night;
     const linked = D.nights.some((n) => n.date === wanted) ? wanted : null;
+    // only the sections of the menu (#live, #mag, ...) count as link targets
+    const hashEl = [...document.querySelectorAll('#tabs a')].some((a) => a.getAttribute('href') === LINK.hash) ? document.querySelector(LINK.hash) : null;
     selected = linked || tonightDate() || D.nights.reduce((b, x) => (x.score > b.score ? x : b), D.nights[0]).date;
     [renderFresh, renderPhase, renderHero, renderLastNight, renderCards, renderDetail, renderTrend, renderKp27, renderKp3, renderSwpcText, renderLive, renderSat, renderCams, renderMag, renderMap, markItineraryToday, renderItinNow, renderWeather, navSpy].forEach(safe);
     startLiveRefresh();
     document.querySelectorAll('#mode button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+    // A notification about another night than tonight opens that night's detail in the advanced view (this visit only,
+    // the remembered choice stays); a link to tonight stays on the basic view's Tonight card.
+    if (linked && MODE === 'basic') { const t = basicTonight(); if (!(t && t.date === linked)) MODE = 'advanced'; }
+    if (hashEl && MODE === 'basic') MODE = 'advanced'; // e.g. a test alert's link to Live
     applyMode();
     // The check panel is collapsed: build it on first open so its chart can measure its width.
     $('#check-panel').addEventListener('toggle', () => { if ($('#check-panel').open) safe(renderCheck); });
-    if (linked) {
-      // instant jump (the CSS smooth scrolling would animate and can be interrupted); repeat once late content has loaded
-      const jump = () => window.scrollTo({ top: $('#night-detail').getBoundingClientRect().top + window.scrollY - headerOffset(), behavior: 'instant' });
-      setTimeout(jump, 250);
-      setTimeout(jump, 1200);
-    }
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(SCROLL_KEY) || 'null'); } catch { /* ignore */ }
+    if (linked && MODE === 'advanced') settle(yOf($('#night-detail')));
+    else if (hashEl && MODE === 'advanced') settle(yOf(hashEl));
+    else if (saved && saved.mode === MODE && !LINK.night && !LINK.hash) settle(() => saved.y); // a reload: stay put
+    let scrollT = null;
+    window.addEventListener('scroll', () => { clearTimeout(scrollT); scrollT = setTimeout(saveScroll, 250); }, { passive: true });
+    window.addEventListener('pagehide', saveScroll);
 
     let lastW = window.innerWidth, timer = null;
     window.addEventListener('resize', () => {
