@@ -97,13 +97,15 @@ INJECT = r"""<script>
   let state = null;
   async function timeline() {
     for (let i = 0; i < 150 && !document.querySelector('#night-cards .night'); i++) await sleep(200);
+    // the local test server sometimes drops a request when four browsers load at once: say so (the slot is retried)
+    if (!document.querySelector('#night-cards .night')) { push('page data did not load'); return; }
     const latest = await fetch('data/latest.json').then((r) => r.json());
     const now = Date.now(), trip = latest.trip;
     const phase = now > new Date(trip.end) ? 'over' : now >= new Date(trip.cruise_day_from || trip.start) ? 'cruise' : 'practice';
     const lint = (label, text, ranges) => {
       const bad = text.match(/undefined|NaN|\bnull\b|Infinity|\[object /);
       check(`${label}: no undefined/NaN in the text`, !bad, bad && bad[0]);
-      check(`${label}: no "1 days"`, !/\b1 days\b/.test(text));
+      check(`${label}: no "1 days"`, !/(?<![\d.])1 days\b/.test(text)); // "looking 2.1 days ahead" is fine
       const z = text.match(/≈0(?![.\d])|\b0\.0 needed/);
       check(`${label}: no need rounded to 0`, !z, z && z[0]);
       if (ranges) {
@@ -402,6 +404,53 @@ def notify_check(env, data_dir, now_utc, label, problems):
         problems.append(f"{label}: no morning notification in the dry run (expected one between 08:00 and 12:00)")
 
 
+def check_mag_alert(tmp, base_env, problems):
+    """On board near Tromsø the real substorm of 1 Oct 2026 (tools/fixtures) must give an alert at 22:58 ship time
+    (magnetometer Masi -129 nT in 10 min): the go-outside or the cloudy message, depending on today's clouds."""
+    data, cfg = tmp / "data-magalert", tmp / "config-magalert"
+    shutil.copytree(ROOT / "data", data)
+    shutil.copy2(ROOT / "tools" / "fixtures" / "mag_2026-10-01.json", data / "mag.json")
+    (data / "alert_state.json").write_text("{}", encoding="utf-8")
+    shifted_config(cfg, date(2026, 10, 15), date(2026, 10, 1))  # in Tromsø on 1 Oct
+    env = {**base_env, "AURORA_DATA": str(data), "AURORA_CONFIG": str(cfg)}
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "alert.py"), "--dry-run", "--now", "2026-10-01T20:58:00Z"],
+                       cwd=ROOT / "scripts", env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    msgs = re.findall(r'"message": "(.*?)",\n', r.stdout)
+    ok = r.returncode == 0 and any("magnetometer Masi" in m for m in msgs)
+    print(f"  {'ok ' if ok else 'FAIL'} magnetometer alert on board, 1 Oct 22:58")
+    if not ok:
+        problems.append(f"magnetometer alert on board (1 Oct 22:58): no alert with the magnetometer: {(r.stderr or r.stdout)[-300:]}")
+    lint_messages(r.stdout, "magnetometer alert on board", problems)
+
+
+def check_notify_flipflop(tmp, base_env, problems):
+    """A night moving 4 points across a rating line (24% <-> 29% on 2 Oct 2026) is no change alert."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from common import night_end  # noqa: E402
+    data = tmp / "data-flipflop"
+    shutil.copytree(ROOT / "data", data)
+    latest = json.loads((data / "latest.json").read_text(encoding="utf-8"))
+    it = json.loads((ROOT / "config" / "itinerary.json").read_text(encoding="utf-8"))
+    now = datetime.now(timezone.utc)
+    watch = [n for n in latest["nights"] if n["date"] in it["watch_nights"] and night_end(n) > now]
+    if not watch:
+        return
+    base = {n["date"]: {"score": n["score"], "rating": n["rating"]} for n in watch}
+    n0 = watch[0]
+    base[n0["date"]] = {"score": round(n0["score"] + 0.04, 3), "rating": "FAIR" if n0["rating"] != "FAIR" else "LOW"}
+    today = (now + SHIP_OFFSET).date().isoformat()
+    state = {"baseline": base, "digest_values": base, "digest_date": today, "change_day": today, "changes_today": 0,
+             "cmes_sent": [c["arrival"] for c in latest["space_weather"].get("cmes", [])]}
+    (data / "notify_state.json").write_text(json.dumps(state), encoding="utf-8")
+    env = {**base_env, "AURORA_DATA": str(data), "AURORA_CONFIG": str(ROOT / "config")}
+    r = subprocess.run([sys.executable, str(ROOT / "scripts" / "notify.py"), "--dry-run"], cwd=ROOT / "scripts", env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
+    ok = r.returncode == 0 and "outlook changed" not in r.stdout
+    print(f"  {'ok ' if ok else 'FAIL'} no change alert for a 4-point move across a rating line")
+    if not ok:
+        problems.append(f"notify: a 4-point move across a rating line sent a change alert: {(r.stderr or r.stdout)[-300:]}")
+
+
 def timeline_checks(name, results, problems):
     """Across the slots of one data set: tonight stays put through the night, moves on by noon, never comes back;
     the morning card only between the end of darkness and noon."""
@@ -650,6 +699,8 @@ def main():
             evening = slot_clock(0, 18)
             run_script("alert.py", ["--dry-run", "--now", evening.strftime("%Y-%m-%dT%H:%M:%SZ")], env, problems, label + ", 18:00")
             run_script("alert.py", ["--dry-run", "--test"], env, problems, label)
+            check_mag_alert(tmp, base_env, problems)
+            check_notify_flipflop(tmp, base_env, problems)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [
@@ -718,6 +769,13 @@ def main():
                 done = []
                 for batch in range(0, len(runs), 4):
                     done += list(ex.map(one, list(enumerate(runs))[batch:batch + 4]))
+            # a slot whose page did not load (the local server under load, not the page) is tried once more, alone
+            LOAD = re.compile(r"did not load|Failed to fetch|did not finish")
+            for k, (name, slot, r) in enumerate(done):
+                if any(LOAD.search(e) for e in r["errors"]):
+                    site, clock = next((s, c) for n, s, sl, c in runs if n == name and sl == slot)
+                    done[k] = (name, slot, page_check(chrome, f"http://127.0.0.1:{port}/{site}/_preflight.html?clock={clock}&tl=1", tmp / "chrome-tl0"))
+                    print(f"  retried {name} {slot}: {'ok' if not done[k][2]['errors'] else 'still failing'}")
             for name, _site, slots in timeline:
                 res = [(slot, r) for n, slot, r in done if n == name]
                 bad = 0

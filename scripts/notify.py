@@ -1,7 +1,8 @@
 """Forecast notifications, run right after update.py (every 3 hours).
 
-  * Change alert: an Arctic "watch" night changes rating or moves >= 5 points since the
-    last change alert, or a new Earth-directed CME is modelled to arrive during the cruise.
+  * Change alert: an Arctic "watch" night moves >= 5 points since the last change alert (a rating change
+    alone is no news: 24% <-> 29% across the 25% line alerted twice in one night on 2 Oct 2026), or a new
+    Earth-directed CME is modelled to arrive during the cruise.
     At most 2 per day. The very first run sends the baseline so you know it is working.
   * Morning digest: once a day between 08:00 and 12:00 ship/Hungarian time (UTC+2),
     with the change since the previous digest.
@@ -84,7 +85,7 @@ def main():
     if not state.get("baseline"):
         send("📊 Aurora change tracking is on",
              "Baseline for the Arctic nights: " + " · ".join(line(n) for n in watch)
-             + f". You'll get a message when one moves ≥{round(CHANGE_PTS * 100)} points or changes rating, "
+             + f". You'll get a message when one moves ≥{round(CHANGE_PTS * 100)} points, "
              "plus a morning outlook around 08:15.",
              priority=3, tags=["bar_chart"], click=link(best and best["date"]), dry=args.dry_run)
         # digest_date=today: the first morning digest comes tomorrow, not together with this message
@@ -92,9 +93,7 @@ def main():
         changed = True
     else:
         base = state["baseline"]
-        moved = [n for n in watch if n["date"] in base and (
-            n["rating"] != base[n["date"]]["rating"]
-            or abs(n["score"] - base[n["date"]]["score"]) >= CHANGE_PTS)]
+        moved = [n for n in watch if n["date"] in base and abs(n["score"] - base[n["date"]]["score"]) >= CHANGE_PTS]
         trip_start = parse_utc(latest["trip"]["start"]) - timedelta(days=1)
         trip_end = parse_utc(latest["trip"]["end"])
         new_cmes = [c for c in latest["space_weather"].get("cmes", [])

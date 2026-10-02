@@ -6,8 +6,10 @@ activity would be good enough at any of them in the dark, with each port's cloud
 (max 2 per night), so the thresholds can be judged before the trip.
 During the cruise it sends:
   * an evening briefing (once per day, ~17-19h ship time) with tonight's outlook;
-  * a "go outside" alert when live activity is good AND the sky at the ship is clear AND it is dark.
-Thresholds are deliberately conservative: fewer alerts, but each one should be worth it.
+  * a "go outside" alert when live activity is good AND the sky at the ship is clear AND it is dark;
+    near Tromsø and Alta also when a nearby magnetometer shows a substorm (the fastest sign, minutes before
+    Hp30 shows it: Masi -102 nT in 10 min at 22:49 on 1 Oct 2026, aurora seen along the coast right after).
+Under clouds a quieter "look for gaps" message instead.
 
 Usage:
   python alert.py            normal run (needs NTFY_TOPIC env var)
@@ -36,8 +38,13 @@ OVATION_NORTH_MIN = 40   # ... or strong oval within view to the north
 BZ_SOUTH = -5            # nT, 30-min mean
 COOLDOWN_MIN = 90
 BRIEFING_HOURS = (17, 19)
-MAG_STRONG_SWING = 200   # nT, last-hour swing at the nearby FMI magnetometer
+MAG_STRONG_SWING = 200   # nT, last-hour swing at a nearby FMI magnetometer
 MAG_STRONG_DROP = -100   # nT within 10 minutes
+MAG_STRONG_LOW = -200    # nT below the station's quiet level
+MAG_ACTIVE = 50          # nT: 50+ below the quiet level, or a 50+ change within 10 min either way (the page's substorm rule)
+MAG_WINDOW_MIN = 20      # minutes looked back (the workflow runs every ~10 min, sometimes later)
+MAG_COOLDOWN_MIN = 30    # on board a new substorm may alert again after 30 min (other alerts: COOLDOWN_MIN)
+CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows
 MAG_NEAR_KM = 300
 TEST_MAX_PER_NIGHT = 2
 
@@ -133,14 +140,42 @@ def judge(lv, req):
     return activity_ok, strong
 
 
-def mag_near(lat, lon, now):
-    """Fresh reading of the nearest FMI magnetometer (data/mag.json, written just before by mag_log.py)."""
+def mag_event(lat, lon, now):
+    """A substorm at the FMI magnetometers within MAG_NEAR_KM in the last MAG_WINDOW_MIN minutes (data/mag.json,
+    written just before by mag_log.py: 1-minute values against each station's quiet level). Same rule as the page:
+    a station 50+ nT below its quiet level, or a change of 50+ nT within 10 minutes either way; "strong" from a
+    100 nT drop within 10 minutes, 200 nT below the quiet level or a 200 nT swing within an hour.
+    Returns None or {"level": "strong" | "watch", "note": text, "at": time}."""
     mag = load_json(DATA / "mag.json", {}) or {}
     best = None
     for st in (mag.get("stations") or {}).values():
-        km = haversine_km((lat, lon), (st["lat"], st["lon"]))
-        if km <= MAG_NEAR_KM and now - parse_utc(st["t"]) <= timedelta(minutes=20) and (not best or km < best[0]):
-            best = (km, st)
+        if not st.get("series") or haversine_km((lat, lon), (st["lat"], st["lon"])) > MAG_NEAR_KM:
+            continue
+        s = st["series"]
+        t0 = parse_utc(s["t0"])
+        pts = [(t0 + timedelta(minutes=i * s["step_min"]), v) for i, v in enumerate(s["dev"]) if v is not None]
+        pts = [p for p in pts if p[0] <= now]
+        if not pts or now - pts[-1][0] > timedelta(minutes=MAG_WINDOW_MIN):
+            continue  # no fresh data from this station
+        hour = [v for t, v in pts if t > now - timedelta(minutes=60)]
+        swing = max(hour) - min(hour)
+        for i, (t, v) in enumerate(pts):
+            if t <= now - timedelta(minutes=MAG_WINDOW_MIN):
+                continue
+            j = i
+            while j > 0 and pts[j - 1][0] >= t - timedelta(minutes=10):
+                j -= 1
+            d10 = v - pts[j][1]
+            if not (v <= -MAG_ACTIVE or abs(d10) >= MAG_ACTIVE or swing >= MAG_STRONG_SWING):
+                continue
+            strong = v <= MAG_STRONG_LOW or d10 <= MAG_STRONG_DROP or swing >= MAG_STRONG_SWING
+            note = (f"magnetometer {st['name']} {d10:+d} nT in 10 min" if abs(d10) >= MAG_ACTIVE
+                    else f"magnetometer {st['name']} {v:+d} nT vs its quiet level")
+            if swing >= MAG_STRONG_SWING:
+                note += f" / {swing} nT in 1 h"
+            key = (strong, max(abs(d10), -v))
+            if not best or key > best[0]:
+                best = (key, {"level": "strong" if strong else "watch", "note": note, "at": iso(t)})
     return best[1] if best else None
 
 
@@ -166,11 +201,12 @@ def test_season(now, route, dry):
         req = kp_required(mag_lat(st["lat"], st["lon"]))
         lv = {**{k: v for k, v in g.items() if k != "ovation_grid"}, **local_readings(g, st["lat"], st["lon"])}
         ok, strong = judge(lv, req)
-        m = mag_near(st["lat"], st["lon"], now)
+        m = mag_event(st["lat"], st["lon"], now)  # the same rule as on board
         mag_note = ""
-        if m and (m["swing_60"] >= MAG_STRONG_SWING or m["change_10"] <= MAG_STRONG_DROP):
-            ok = strong = True
-            mag_note = f", magnetometer {m['name']} {m['change_10']:+d} nT in 10 min / {m['swing_60']} nT in 1 h"
+        if m:
+            ok = True
+            strong = strong or m["level"] == "strong"
+            mag_note = f", {m['note']}"
         print(f"test {st['name']}: req {req:.1f} ok={ok} strong={strong} cloud={lv.get('cloud')}{mag_note}")
         if ok:
             hits.append((st, req, lv, strong, mag_note))
@@ -325,33 +361,40 @@ def main():
         lv = live_readings(pos["lat"], pos["lon"])
         cloud = lv.get("cloud")
         activity_ok, strong = judge(lv, req)
+        # a substorm at a nearby magnetometer (Tromsø / Alta area): the fastest sign, minutes before Hp30 shows it
+        m = mag_event(pos["lat"], pos["lon"], now)
+        if m:
+            activity_ok = True
+            strong = strong or m["level"] == "strong"
+        mag_txt = f"{m['note']} · " if m else ""
         sky_ok = cloud is not None and cloud <= CLOUD_MAX
         print(f"{iso(now)} {pos['place']} sun {sa:.1f} req {req:.1f} activity_ok={activity_ok} "
               f"strong={strong} sky_ok={sky_ok} live={ {k: v for k, v in lv.items() if k != 'hp30_series'} }")
         if activity_ok and sky_ok:
             level = "strong" if strong else "watch"
             last = parse_utc(state["last_alert"]) if state.get("last_alert") else None
-            cooling = last and (now - last) < timedelta(minutes=COOLDOWN_MIN)
+            cooling = last and (now - last) < timedelta(minutes=MAG_COOLDOWN_MIN if m else COOLDOWN_MIN)
             escalation = level == "strong" and state.get("last_level") == "watch"
             if not cooling or escalation:
                 if level == "strong":
                     title, prio, tags = "🔥 Strong aurora — go outside NOW", 5, ["rotating_light"]
                 else:
                     title, prio, tags = "🟢 Aurora likely — go outside", 4, ["sparkles"]
-                send(title, f"{pos['place']}. Look north, away from ship lights. {fmt_live(lv, req)}",
+                send(title, f"{pos['place']}. Look north, away from ship lights. {mag_txt}{fmt_live(lv, req)}",
                      priority=prio, tags=tags, dry=args.dry_run, click=tonight_link(now))
                 state["last_alert"] = iso(now)
                 state["last_level"] = level
                 changed = True
         elif activity_ok:
-            # Cloudy here, but forecasts miss gaps and the ship moves: one quieter heads-up per night,
-            # a second one only if it turns strong.
+            # Cloudy here, but forecasts miss gaps and the ship moves: one quieter heads-up per night, again when it
+            # turns strong or when a new substorm shows 2 hours later.
             night = night_key(now)
             c = state.get("cloudy") or {}
-            if c.get("night") != night or (strong and c.get("level") == "watch"):
+            again = m and c.get("at") and now - parse_utc(c["at"]) >= timedelta(minutes=CLOUDY_REPEAT_MIN)
+            if c.get("night") != night or (strong and c.get("level") == "watch") or again:
                 send("☁️ Aurora active, cloudy here — look for gaps",
                      f"{pos['place']}: forecast cloud {cloud if cloud is not None else '?'}%. "
-                     f"Worth a look outside for breaks in the cloud. {fmt_live(lv, req)}",
+                     f"Worth a look outside for breaks in the cloud. {mag_txt}{fmt_live(lv, req)}",
                      priority=3, tags=["cloud"], dry=args.dry_run, click=tonight_link(now))
                 state["cloudy"] = {"night": night, "level": "strong" if strong else "watch", "at": iso(now)}
                 changed = True
