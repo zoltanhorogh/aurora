@@ -48,7 +48,7 @@
   let LAST = null;   // last_night.json (summary of the last finished night up north)
   let TLOG = null;   // tonight_log.json (tonight's basic answer at every forecast run)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
-  let MAG = null;    // mag.json (FMI magnetometer swing, every 10 min after dark)
+  let MAG = null;    // mag.json (FMI magnetometer swing, several times an hour after dark)
   let selected = null;
   let bzPts = null;  // loaded on demand
 
@@ -263,7 +263,7 @@
       <div class="pastres ${/^Aurora on|^Possible/.test(L.headline) ? 'ok' : 'why'}" style="margin:4px 0 8px">${esc(L.headline)}</div>
       ${row('Cameras', cams)}${row('Magnetometers', mag)}${row('Activity', L.hp30 ? `Hp30 max ${L.hp30.max.toFixed(1)} at ${L.hp30.at}` : '')}
       ${row('Clouds (MET)', clouds)}${row('Alerts sent', alerts)}
-      <p class="hint" style="margin:6px 0 0">Cameras: all-sky camera AI, checked every 10 minutes (the most auroral picture of each hour) · magnetometers: lowest point vs quiet level (−50 active, −200 strong) · clouds: MET Norway's analysis afterwards.</p>`;
+      <p class="hint" style="margin:6px 0 0">Cameras: all-sky camera AI, checked several times an hour (the most auroral picture of each hour) · magnetometers: lowest point vs quiet level (−50 active, −200 strong) · clouds: MET Norway's analysis afterwards.</p>`;
   }
 
   function renderCards() {
@@ -1004,7 +1004,7 @@
   // Live "here": Tromsø (the practice spot) before the cruise, the ship from the day of departure (herePos)
   const liveNeed = () => { const [lat, lon] = herePos(); return kpNeedAt(lat, lon); };
 
-  // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json every 10 min on board).
+  // The newer of two Hp30 series (latest.json every 3 h, data/hp30.json several times an hour).
   const newerHp30 = (a, b) => ((b && b.length && (!a || !a.length || b[b.length - 1][0] > a[a.length - 1][0])) ? b : (a || []));
 
   let hpSel = null; // the half hour tapped in the Hp30 tile (kept across refreshes)
@@ -1654,64 +1654,90 @@
   function verificationTable() {
     const recs = VER && VER.nights ? Object.values(VER.nights).filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.spot.localeCompare(b.spot))) : [];
     if (!recs.length) return '';
-    const hoursTxt = (arr) => (arr && arr.length ? `${span(arr)} (${arr.length} h)` : 'none');
-    const LEADS = [['forecast_2d', '2 days before'], ['forecast_1d', '1 day before'], ['forecast', 'Same evening']];
-    // Did a recorded forecast get the clouds right? null when not recorded.
+    // Stretches of 2+ consecutive hours (the clear-gap rule of the whole page) in a list of true/false hours
+    const runs = (flags) => {
+      const out = [];
+      for (let i = 0; i < flags.length; i++) {
+        if (!flags[i]) continue;
+        let j = i;
+        while (j + 1 < flags.length && flags[j + 1]) j++;
+        if (j > i) out.push([i, j]);
+        i = j;
+      }
+      return out;
+    };
+    const runText = (axis, rs) => rs.map(([a, b]) => `${axis[a].slice(0, 2)}–${pad((+axis[b].slice(0, 2) + 1) % 24)}`).join(', ');
+    // Was a recorded forecast right about the clouds? Right = it said a clear stretch and there was one at that time,
+    // or it said none and there was none. A forecast made before MET's hourly forecast reached the night is not judged.
     const judge = (r, key) => {
       const o = r.observed, f = r[key];
       if (!f) return null;
-      const good = f.hours.filter((h) => h[1] === 'GO' || h[1] === 'TRY').map((h) => h[0]);
-      const clear = new Set([...(o.clear_dark || []), ...(o.clear_twilight || [])]);
-      const ok = good.length ? good.some((h) => clear.has(h)) : !clear.size;
-      return { ok, good, f };
+      if (f.hours.every((h) => h[1] === '–' || h[1] === 'twilight')) return { early: true, f };
+      const axis = o.hours.map((h) => h[0]);
+      const said = axis.map((l) => { const h = f.hours.find((x) => x[0] === l); return !!h && (h[1] === 'GO' || h[1] === 'TRY'); });
+      const real = axis.map((l) => (o.clear_dark || []).includes(l));
+      const fr = runs(said), rr = runs(real);
+      const ok = fr.length ? fr.some(([a, b]) => rr.some(([c, d]) => a <= d && c <= b)) : !rr.length;
+      return { ok, f, said: fr.length ? `clear ${runText(axis, fr)}` : 'no clear stretch' };
     };
-    const fcCell = (r) => {
-      const lines = LEADS.map(([key, label]) => {
-        const j = judge(r, key);
-        if (!j) return '';
-        const win = j.good.length ? span(j.good) : 'no window';
-        return `<div><span class="why">${label}:</span> ${pct(j.f.score)} ${j.f.rating} · ${win} ${j.ok ? '<span class="ok">✓</span>' : '<span class="why">✕</span>'}</div>`;
-      }).join('');
-      return lines || '<span class="why">not recorded</span>';
-    };
-    // What the all-sky camera AI saw that night (Tromsø camera for Tromsø, Skibotn camera for Alta).
-    const camCell = (r) => {
-      if (r.spot !== 'Tromsø') return '<span class="why">– no camera nearby</span>'; // Skibotn is ~140 km from Alta
-      const site = 'tromso';
-      const hrs = SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date][site];
-      if (!hrs) return '<span class="why">–</span>';
-      const list = Object.entries(hrs).sort(([a], [b]) => hourOrder(a, b));
-      const hoursOf = (w) => list.filter(([, v]) => camWord(v) === w).map(([h]) => `${h}:00`);
-      const aur = hoursOf('aurora'), poss = hoursOf('possible aurora');
-      const clear = hoursOf('clear').length, moon = hoursOf('bright (moon)').length;
-      const label = site === 'skibotn' ? '<span class="why"> (Skibotn cam)</span>' : '';
-      if (aur.length) return `<span class="ok">✓ aurora</span> ${span(aur)} <span class="why">(${aur.length} h)</span>${label}`;
-      if (poss.length) return `<span class="ok">possible aurora</span> ${span(poss)} <span class="why">(bright sky, ${poss.length} h)</span>${label}`;
-      if (clear) return `clear, no aurora <span class="why">(${clear} h)</span>${label}`;
-      if (moon * 2 >= list.length) return `bright sky (moon), AI unsure <span class="why">(${moon} h)</span>${label}`;
-      return `cloudy <span class="why">(${list.length} h checked)</span>${label}`;
-    };
-    const row = (r) => {
-      const o = r.observed;
-      return `<tr><td>${shortDay(r.date)}</td><td>${esc(r.spot)}</td><td style="text-align:left">${fcCell(r)}</td><td>${hoursTxt(o.clear_dark)}${o.clear_twilight && o.clear_twilight.length ? `<span class="why"> +twilight ${span(o.clear_twilight)}</span>` : ''}</td><td>${camCell(r)}</td><td>${o.hp30_max_dark != null ? o.hp30_max_dark.toFixed(1) : '–'} <span class="why">(need ${o.kp_needed})</span></td></tr>`;
-    };
+    const LEADS = [['forecast', 'that evening'], ['forecast_1d', '1 day before'], ['forecast_2d', '2 days before']];
     const score = (key) => {
-      const js = recs.map((r) => judge(r, key)).filter(Boolean);
+      const js = recs.map((r) => judge(r, key)).filter((j) => j && !j.early);
       return js.length ? `${js.filter((j) => j.ok).length} of ${js.length}` : '–';
     };
-    const clearNights = recs.filter((r) => r.observed.clear_dark && r.observed.clear_dark.length).length;
-    const summary = `<div class="versum">
-      <div><b>${score('forecast')}</b><span>same-evening forecasts right about the clouds</span></div>
-      <div><b>${score('forecast_1d')} · ${score('forecast_2d')}</b><span>right 1 day · 2 days before</span></div>
-      <div><b>${clearNights} of ${recs.length}</b><span>nights had clear dark hours (Tromsø + Alta)</span></div></div>`;
+    const camHours = (r) => {
+      if (r.spot !== 'Tromsø') return null; // Skibotn is ~140 km from Alta
+      return (SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date].tromso) || null;
+    };
+    const card = (r) => {
+      const o = r.observed;
+      const axis = o.hours.map((h) => h[0]);
+      const ev = r.forecast;
+      const cam = camHours(r);
+      const fcCls = (l) => {
+        const h = ev && ev.hours.find((x) => x[0] === l);
+        return !h || h[1] === '–' ? 'u' : h[1] === 'twilight' ? 't' : { GO: 'g', TRY: 'y' }[h[1]] || 'n';
+      };
+      const realCls = (h) => (h[2] <= 40 ? 'g' : h[2] <= 70 ? 'y' : 'n');
+      const aur = (l) => {
+        const v = cam && cam[l.slice(0, 2)];
+        return v && camWord(v) === 'aurora' ? ' aur' : v && camWord(v) === 'possible aurora' ? ' aur maybe' : '';
+      };
+      const cols = `grid-template-columns:repeat(${axis.length},1fr)`;
+      const j = judge(r, 'forecast');
+      const head = !j ? '<span class="vres u">no evening forecast recorded</span>'
+        : j.early ? '<span class="vres u">evening forecast had no hours yet</span>'
+        : j.ok ? '<span class="vres ok">✓ forecast right</span>' : '<span class="vres n">✕ forecast wrong</span>';
+      const real = runs(o.hours.map((h) => h[1] <= -12 && h[2] <= 40));
+      const camTxt = !cam ? (r.spot === 'Tromsø' ? 'camera: no record' : 'no camera nearby')
+        : (() => { const a = Object.keys(cam).filter((h) => camWord(cam[h]) === 'aurora').sort(hourOrder); return a.length ? `camera saw aurora ${span(a)}` : 'camera saw no aurora'; })();
+      const hp = o.hp30_max_dark;
+      const act = hp == null ? '' : `activity up to Hp30 ${hp.toFixed(1)} (${o.kp_needed} needed: ${hp >= o.kp_needed ? 'enough' : 'too weak'})`;
+      const earlier = LEADS.slice(1).map(([key, label]) => {
+        const x = judge(r, key);
+        if (!x) return '';
+        return x.early ? `${label}: ${pct(x.f.score)} ${x.f.rating}, too early for hours`
+          : `${label} ${x.ok ? '✓' : '✕'} (${x.said})`;
+      }).filter(Boolean);
+      return `<div class="vcard">
+        <div class="vhead"><b>${shortDay(r.date)} · ${esc(r.spot)}</b>${head}</div>
+        <div class="vlab">Said that evening</div>
+        <div class="vstrip" style="${cols}">${axis.map((l) => `<i class="${fcCls(l)}"></i>`).join('')}</div>
+        <div class="vlab">What happened</div>
+        <div class="vstrip" style="${cols}">${o.hours.map((h) => `<i class="${realCls(h)}${h[1] > -12 ? ' tw' : ''}${aur(h[0])}"></i>`).join('')}</div>
+        <div class="vaxis" style="${cols}">${axis.map((l) => `<span>${l.slice(0, 2)}</span>`).join('')}</div>
+        <div class="vtext">Said: ${j && !j.early ? j.said : '–'} · Happened: ${real.length ? `clear ${runText(axis, real)}` : 'no clear stretch'} · ${camTxt}${act ? ` · ${act}` : ''}</div>
+        ${earlier.length ? `<div class="vtext why">Earlier forecasts: ${earlier.join(' · ')}</div>` : ''}
+      </div>`;
+    };
+    const clearNights = recs.filter((r) => runs(r.observed.hours.map((h) => h[1] <= -12 && h[2] <= 40)).length).length;
     return `
-      <h3 style="margin-top:18px">How did it go? Past nights</h3>
-      ${summary}
-      <div class="tbl-wrap"><table>
-        <tr><th>Night</th><th>Spot</th><th style="text-align:left">Forecast (✓ = clouds right)</th><th>Actually clear (dark)</th><th>Camera saw</th><th>Hp30 max</th></tr>
-        ${recs.map(row).join('')}
-      </table></div>
-      <p class="hint">Forecasts are recorded from 27 Sep on, 2 days before, 1 day before and on the evening itself; the first results appear the morning after. Clear = MET Norway's analysed cloud ≤40% (from its latest runs, not a satellite photo). Camera saw = what the all-sky camera AI saw that night (from 28 Sep on; checked every 10 minutes since 2 Oct, once an hour before): the real ground truth. Hp30 max = strongest half-hour of planetary activity in the dark hours; it can underrate local substorms right under the auroral oval.</p>`;
+      <h3 style="margin-top:18px" id="ver">How did it go? Past nights</h3>
+      <p class="vsum">The evening forecast got the clouds right on <b>${score('forecast')}</b> nights · 1 day before <b>${score('forecast_1d')}</b> · 2 days before <b>${score('forecast_2d')}</b>. A clear stretch happened on <b>${clearNights} of ${recs.length}</b> nights (Tromsø and Alta together).</p>
+      <p class="hint" style="margin-top:0"><b>Right</b> = it said a clear stretch (2+ dark hours ≤40% cloud) and there was one at that time, or it said none and there was none. Forecasts made before MET's hourly forecast reached the night are shown but not counted.</p>
+      <div class="vlegend"><span><b class="g"></b>go / clear ≤40%</span><span><b class="y"></b>maybe / broken ≤70%</span><span><b class="n"></b>no / cloudy</span><span><b class="t"></b>twilight</span><span><b class="g aur"></b>camera saw aurora (Tromsø)</span></div>
+      <div class="vgrid">${recs.map(card).join('')}</div>
+      <p class="hint">Upper strip: the forecast's verdict for each hour that evening (the run before 20:00). Lower strip: MET Norway's analysed cloud afterwards (from its latest runs, not a satellite photo); faded = twilight. Camera = the Tromsø all-sky camera AI (checked several times an hour since 2 Oct, once an hour before). Hp30 = strongest half hour of planetary activity in the dark hours.</p>`;
   }
 
   // ------------------------------------------------------------ model check (next 3 nights in Tromsø and Alta)
@@ -2285,8 +2311,9 @@
     const hereClear = here ? words(here).filter(([, w]) => w === 'clear' || w.includes('aurora')).map(([h]) => h) : [];
     const hereCloudy = here ? words(here).filter(([, w]) => w === 'cloudy').map(([h]) => h) : [];
     const nearby = cams.filter((c) => c !== here && auroraH(c).length);
-    // how often the camera log was checked that night (every 10 minutes since 2 Oct 2026, once an hour before)
-    const every = here && Object.values(here.hrs).some((v) => v.n) ? 'every 10 minutes' : 'once an hour';
+    // how often the camera log was checked that night (several times an hour since 2 Oct 2026, once an hour before;
+    // the alert workflow is due every 10 minutes, GitHub starts it every 15-30)
+    const every = here && Object.values(here.hrs).some((v) => v.n) ? 'several times an hour' : 'once an hour';
     const span = (hh) => hh.reduce((g, h) => ((g.length && (+g[g.length - 1][g[g.length - 1].length - 1] + 1) % 24 === +h)
       ? (g[g.length - 1].push(h), g) : [...g, [h]]), []).map((x) => `${x[0]}–${pad((+x[x.length - 1] + 1) % 24)}`).join(', ');
     // activity during that night (18:00-06:00 ship time)

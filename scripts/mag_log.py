@@ -2,7 +2,7 @@
 
 Source: FMI (Finnish Meteorological Institute) IMAGE network, 10-second real-time data, ~1 min delay,
 licence CC BY 4.0. The browser cannot read it directly (no CORS), so this runs from the alert workflow
-every 10 min and writes data/mag.json. Only in the dark at Tromsø: in daylight aurora cannot be seen anyway.
+(due every 10 min, in practice every 15-30) and writes data/mag.json. Only in the dark at Tromsø: in daylight aurora cannot be seen anyway.
 
 Stations near the route: Kilpisjärvi (~100 km from Tromsø) and Masi (~70 km south of Alta).
 Swing = max − min of the horizontal field (nT); a substorm (active aurora overhead) shows as a sudden dip.

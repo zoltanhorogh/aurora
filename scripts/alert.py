@@ -1,6 +1,6 @@
 """Real-time aurora alerts via ntfy push notifications.
 
-Runs every ~10 minutes from GitHub Actions.
+Runs from GitHub Actions, scheduled every 10 minutes (in practice every 15-30: GitHub's schedule is best-effort).
 Before the cruise ("test season") it watches all Norwegian ports at once and sends "🧪 TEST" alerts when
 activity would be good enough at any of them in the dark, with each port's clouds in the message
 (max 2 per night), so the thresholds can be judged before the trip.
@@ -42,7 +42,8 @@ MAG_STRONG_SWING = 200   # nT, last-hour swing at a nearby FMI magnetometer
 MAG_STRONG_DROP = -100   # nT within 10 minutes
 MAG_STRONG_LOW = -200    # nT below the station's quiet level
 MAG_ACTIVE = 50          # nT: 50+ below the quiet level, or a 50+ change within 10 min either way (the page's substorm rule)
-MAG_WINDOW_MIN = 20      # minutes looked back (the workflow runs every ~10 min, sometimes later)
+MAG_WINDOW_MIN = 35      # minutes looked back: the workflow is due every 10 min but GitHub runs it every 15-30
+                         # (18-29 min apart on 2 Oct 2026); a substorm moment already alerted is not alerted again
 MAG_COOLDOWN_MIN = 30    # on board a new substorm may alert again after 30 min (other alerts: COOLDOWN_MIN)
 CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows
 MAG_NEAR_KM = 300
@@ -363,6 +364,8 @@ def main():
         activity_ok, strong = judge(lv, req)
         # a substorm at a nearby magnetometer (Tromsø / Alta area): the fastest sign, minutes before Hp30 shows it
         m = mag_event(pos["lat"], pos["lon"], now)
+        if m and state.get("mag_at") and parse_utc(m["at"]) <= parse_utc(state["mag_at"]):
+            m = None  # the same substorm moment as the last alert (seen again because of the long look-back)
         if m:
             activity_ok = True
             strong = strong or m["level"] == "strong"
@@ -384,6 +387,8 @@ def main():
                      priority=prio, tags=tags, dry=args.dry_run, click=tonight_link(now))
                 state["last_alert"] = iso(now)
                 state["last_level"] = level
+                if m:
+                    state["mag_at"] = m["at"]
                 changed = True
         elif activity_ok:
             # Cloudy here, but forecasts miss gaps and the ship moves: one quieter heads-up per night, again when it
@@ -397,6 +402,8 @@ def main():
                      f"Worth a look outside for breaks in the cloud. {mag_txt}{fmt_live(lv, req)}",
                      priority=3, tags=["cloud"], dry=args.dry_run, click=tonight_link(now))
                 state["cloudy"] = {"night": night, "level": "strong" if strong else "watch", "at": iso(now)}
+                if m:
+                    state["mag_at"] = m["at"]
                 changed = True
 
     if changed and not args.dry_run:

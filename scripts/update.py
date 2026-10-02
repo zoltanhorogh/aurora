@@ -254,7 +254,10 @@ def kp_for_hour(h, kp3_map, kp27_map, daily, cmes):
             sigma, src = 1.7, "27-day recurrence"
         else:
             kp, sigma, src = KP_CLIMATOLOGY, 1.8, "climatology"
-    for c in cmes:
+    # NASA's CME model only beyond NOAA's 3-day forecast: inside it NOAA's forecasters have already taken the CME into
+    # account (2 Oct 2026: the model's 05:15 arrival kept the evening at Kp 5 for 18 hours, while NOAA had moved the
+    # storm to 23-02 h and put Kp 1 before it).
+    for c in cmes if b is None else []:
         arrival = parse_utc(c["arrival"])
         dt = (h - arrival).total_seconds() / 3600
         # from 6 h before the modelled arrival (timing error) to 18 h after it (the storm follows the shock)

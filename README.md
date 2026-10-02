@@ -19,7 +19,7 @@ Live at **https://zoltanhorogh.github.io/aurora/**
   one of them has a clear stretch still to come that here has not.
 - A night is over when its darkness ends at its place; it then keeps its last forecast, and the page shows what
   happened instead (MET Norway's cloud analysis, GFZ Hp30, the all-sky camera AI, the FMI magnetometers).
-- `scripts/alert.py` runs every 10 minutes after `sky_log.py` (all-sky camera AI, the most auroral picture of each
+- `scripts/alert.py` runs (scheduled every 10 minutes; GitHub starts it every 15–30 in practice) after `sky_log.py` (all-sky camera AI, the most auroral picture of each
   hour) and `mag_log.py` (FMI magnetometers). Before the cruise it sends test alerts; on board an evening outlook
   and "go outside" alerts through [ntfy](https://ntfy.sh) (topic in the `NTFY_TOPIC` repository secret).
   Measured activity is Hp30 (GFZ Potsdam), never NOAA's 1-minute Kp.

@@ -208,6 +208,12 @@ INJECT = r"""<script>
           detailChecks(cp, `model check day ${d + 1} spot ${s + 1}`);
         }
       }
+      const ver = await fetch('data/verification.json').then((r) => r.json()).catch(() => null);
+      if (ver && Object.values(ver.nights || {}).some((r) => r.observed)) {
+        const cards = $$('#check-panel .vcard');
+        check('model check: past nights as cards with two strips', cards.length > 0 && cards.every((c) => c.querySelectorAll('.vstrip').length === 2),
+          `${cards.length} cards`);
+      }
     }
     const tabs = $$('#wx-tabs button').length;
     for (let i = 0; i < tabs; i++) {

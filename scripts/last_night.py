@@ -119,7 +119,7 @@ def headline(o):
     hp = o.get("hp30", {}).get("max")
     if mag_min <= -50 or (hp is not None and hp >= NEED):
         what = f"Hp30 max {hp:.1f}, {NEED} needed in Tromsø" if hp is not None and hp >= NEED else f"magnetometer {mag_min} nT"
-        return f"Activity was enough ({what}), but no aurora in the cameras' 10-minute checks (clouds or moon)"
+        return f"Activity was enough ({what}), but no aurora in the cameras' checks, several an hour (clouds or moon)"
     return f"Too quiet even for Tromsø (Hp30 max {hp:.1f}, {NEED} needed)" if hp is not None else "Quiet night"
 
 

@@ -2,7 +2,7 @@
 
 The Tromsø AI project (University of Electro-Communications, Japan) classifies the latest all-sky
 camera image every few minutes: aurora types (arc / discrete / diffuse, "aurora but cloudy",
-"aurora but bright"), clear, cloudy, dusk/dawn — each in %. Runs from the alert workflow every 10 min
+"aurora but bright"), clear, cloudy, dusk/dawn — each in %. Runs from the alert workflow (due every 10 min, in practice every 15-30)
 and keeps, per site and hour, the most auroral of the pictures it checked (only when it is dark at the camera):
 one reading per hour missed both aurora spells over Tromsø on 1 Oct 2026 (22:50 and 01:30-02:10).
 Output: data/sky_obs.json  {night date (local evening): {site: {"HH": {...}}}}
