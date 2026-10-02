@@ -1732,12 +1732,13 @@
     };
     const clearNights = recs.filter((r) => runs(r.observed.hours.map((h) => h[1] <= -12 && h[2] <= 40)).length).length;
     return `
-      <h3 style="margin-top:18px" id="ver">How did it go? Past nights</h3>
+      <details class="vwrap" id="ver"><summary><b>How did it go? Past nights</b> <span class="why">· evening forecast right on ${score('forecast')}</span></summary>
       <p class="vsum">The evening forecast got the clouds right on <b>${score('forecast')}</b> nights · 1 day before <b>${score('forecast_1d')}</b> · 2 days before <b>${score('forecast_2d')}</b>. A clear stretch happened on <b>${clearNights} of ${recs.length}</b> nights (Tromsø and Alta together).</p>
       <p class="hint" style="margin-top:0"><b>Right</b> = it said a clear stretch (2+ dark hours ≤40% cloud) and there was one at that time, or it said none and there was none. Forecasts made before MET's hourly forecast reached the night are shown but not counted.</p>
       <div class="vlegend"><span><b class="g"></b>go / clear ≤40%</span><span><b class="y"></b>maybe / broken ≤70%</span><span><b class="n"></b>no / cloudy</span><span><b class="t"></b>twilight</span><span><b class="g aur"></b>camera saw aurora (Tromsø)</span></div>
       <div class="vgrid">${recs.map(card).join('')}</div>
-      <p class="hint">Upper strip: the forecast's verdict for each hour that evening (the run before 20:00). Lower strip: MET Norway's analysed cloud afterwards (from its latest runs, not a satellite photo); faded = twilight. Camera = the Tromsø all-sky camera AI (checked several times an hour since 2 Oct, once an hour before). Hp30 = strongest half hour of planetary activity in the dark hours.</p>`;
+      <p class="hint">Upper strip: the forecast's verdict for each hour that evening (the run before 20:00). Lower strip: MET Norway's analysed cloud afterwards (from its latest runs, not a satellite photo); faded = twilight. Camera = the Tromsø all-sky camera AI (checked several times an hour since 2 Oct, once an hour before). Hp30 = strongest half hour of planetary activity in the dark hours.</p>
+      </details>`;
   }
 
   // ------------------------------------------------------------ model check (next 3 nights in Tromsø and Alta)

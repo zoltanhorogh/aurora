@@ -365,7 +365,9 @@ div.why { color: var(--muted); font-size: 11px; line-height: 1.4; }
 .wx-now { border: 1px solid rgba(62, 224, 143, 0.35); background: rgba(62, 224, 143, 0.06); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
 .wx-now > summary { font-size: 14px; color: var(--text); }
 /* Every dropdown: no browser triangle, a clear pill on the right that says what a tap does */
-details > summary { list-style: none; }
+/* the Show/Hide button floats right inside its summary: the summary must contain it, or a scrolling table below
+   (a new block formatting context) shrinks beside it and gets a needless sideways scroll */
+details > summary { list-style: none; display: flow-root; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::after { content: 'Show ▾'; float: right; margin-left: 10px; font-size: 11px; font-weight: 600; color: var(--aurora);
   border: 1px solid rgba(62, 224, 143, 0.45); border-radius: 999px; padding: 1px 9px; line-height: 1.6; white-space: nowrap; }
@@ -504,6 +506,9 @@ table.itin .why { font-size: 11px; }
 .step small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 2px; }
 
 /* model check: how did it go (forecast vs what happened, per night) */
+.vwrap { margin-top: 18px; }
+.vwrap > summary { cursor: pointer; font-size: 15px; color: var(--text); }
+.vwrap[open] > summary { margin-bottom: 8px; }
 .vsum { font-size: 14px; margin: 6px 0; }
 .vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; margin-top: 8px; }
 .vcard { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; min-width: 0; }
