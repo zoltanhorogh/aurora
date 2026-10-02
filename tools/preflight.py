@@ -409,7 +409,8 @@ def timeline_checks(name, results, problems):
     night = [by[k]["tonight"] for k in ("D0 18:00", "D0 21:00", "D1 00:00", "D1 03:00") if k in by]
     if len(set(night)) > 1:
         problems.append(f"timeline {name}: 'tonight' changes during the night: {night}")
-    if "D0 18:00" in by and "D1 12:00" in by and by["D0 18:00"]["tonight"] == by["D1 12:00"]["tonight"]:
+    # after the cruise nights there is no night to move on from ("Tonight" without a date all day)
+    if "D0 18:00" in by and "D1 12:00" in by and by["D0 18:00"]["tonight"] != "Tonight"             and by["D0 18:00"]["tonight"] == by["D1 12:00"]["tonight"]:
         problems.append(f"timeline {name}: 'tonight' did not move on by noon: {by['D1 12:00']['tonight']}")
     seen = []
     for k, s in results:
