@@ -253,6 +253,9 @@ INJECT = r"""<script>
         && (!!b.querySelector('.b-verdict') || over || /No forecast for tonight/.test(b.textContent)));
       if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf').length === 2);
       if (b.querySelector('#b-last')) check('basic last-night card has its two tiles', b.querySelectorAll('#b-last .bfx .bf').length === 2);
+      const inl = b.querySelector('.binland');
+      if (inl) check('basic inland line: one answer and its table', /^🚗 Inland: (clearer at|no clearer than here|cloudy too)/.test(inl.querySelector('summary').textContent.trim())
+        && inl.querySelectorAll('table.itab tr').length === 5, inl.querySelector('summary').textContent.trim());
       // the morning card goes on top only once tonight's darkness is over, never in the middle of the night
       if (b.querySelector('#b-last')) check('basic morning card only after the night', !b.querySelector('.bstrip > div.past'));
       if (b.querySelector('#b-last')) check('basic last night has one hour strip', b.querySelectorAll('#b-last .pstrip').length <= 1);
@@ -574,6 +577,16 @@ def data_invariants(data_dir, label, problems):
              if r["kind"] == "estimated" and datetime.fromisoformat(r["t"].replace("Z", "+00:00")) > gen]
     if early:
         problems.append(f"{label}: NOAA blocks that have not started are kept as 'estimated' (measured): {early[:2]}")
+    # inland cloud check: every night not over with dark hours in Tromsø/Alta and MET clouds has the 3 tour areas
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from common import night_end  # noqa: E402
+    for n in latest["nights"] + (latest.get("model_check") or {}).get("nights", []):
+        port = [h for h in n["hourly"] if h["dark"] and h["state"] == "port" and h["place"] in ("Tromsø", "Alta")]
+        if not port or not n["clear"]["source"].startswith("MET Norway") or night_end(n) <= gen:
+            continue
+        inl = n.get("inland") or {}
+        if len(inl.get("spots", [])) != 3 or any(len(s["cloud"]) != len(inl["t"]) for s in inl["spots"])                 or all(v is None for s in inl["spots"] for v in s["cloud"]):
+            problems.append(f"{label}: {n['date']} {n.get('spot', 'cruise')}: inland cloud check missing or empty")
 
 
 def run_script(name, args, env, problems, label):

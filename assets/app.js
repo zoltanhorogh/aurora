@@ -463,6 +463,61 @@
       </div>`;
   }
 
+  // ------------------------------------------------------------ inland cloud check (chase tours from Tromsø and Alta)
+  // The robot keeps MET's clouds at the usual tour areas behind the coastal mountains for the dark hours in port
+  // (n.inland). The answer uses the hours still to come and the clear-gap rule of the whole page (2+ hours ≤40%):
+  // "clearer inland" when a tour area has such a gap and here has none, or one at least 2 hours shorter.
+  function inlandView(n) {
+    const I = n && n.inland;
+    if (!I) return null;
+    const ahead = I.t.map((t) => new Date(t).getTime() + 3600e3 > Date.now());
+    if (!ahead.some(Boolean)) return null;
+    const gap = (vals) => {
+      let best = null;
+      for (let i = 0; i < vals.length; i++) {
+        if (!ahead[i] || vals[i] == null || vals[i] > CLEAR_LINE) continue;
+        let j = i;
+        while (j + 1 < vals.length && ahead[j + 1] && vals[j + 1] != null && vals[j + 1] <= CLEAR_LINE) j++;
+        if (j > i && (!best || j - i > best[1] - best[0])) best = [i, j];
+        i = j;
+      }
+      return best && { len: best[1] - best[0] + 1, text: `${I.local[best[0]]}–${hm(new Date(I.t[best[1]]).getTime() + 3600e3)}` };
+    };
+    const here = gap(I.here);
+    const clear = I.spots.map((s) => ({ ...s, gap: gap(s.cloud) })).filter((s) => s.gap).sort((a, b) => b.gap.len - a.gap.len);
+    const best = clear[0];
+    if (best && (!here || best.gap.len >= here.len + 2)) {
+      const also = clear.slice(1).map((s) => `${s.name} ${s.gap.text}`);
+      return { cls: 'ok', text: `Inland: clearer at ${best.name} ${best.gap.text} (${best.drive} drive)${also.length ? ` · also ${also.join(', ')}` : ''}` };
+    }
+    if (here) return { cls: '', text: `Inland: no clearer than here (clear here ${here.text})` };
+    return { cls: '', text: `Inland: cloudy too (${I.spots.map((s) => s.name).join(', ')})` };
+  }
+
+  function inlandTable(I) {
+    const now = Date.now();
+    const cell = (v, i) => `<td class="${new Date(I.t[i]).getTime() + 3600e3 < now ? 'past' : ''}">${v == null ? '–'
+      : `<svg class="bico" viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(v)}</svg><span class="${v <= CLEAR_LINE ? 'ok' : ''}">${v}</span>`}</td>`;
+    const row = (name, sub, vals) => `<tr><th>${esc(name)}<small>${esc(sub)}</small></th>${vals.map(cell).join('')}</tr>`;
+    return `<div class="tbl-wrap"><table class="itab"><tr><th><small>cloud %</small></th>${I.local.map((l) => `<th>${l.slice(0, 2)}</th>`).join('')}</tr>
+      ${row(I.port, 'here', I.here)}${I.spots.map((s) => row(s.name, `${s.drive} drive`, s.cloud)).join('')}</table></div>`;
+  }
+  const INLAND_NOTE = (I) => `Clouds (MET Norway) at the usual chase-tour areas inland from ${esc(I.port)}, behind the coastal mountains, where it is often clearer. Green = clear (≤40%). Drive times are rough, one way; the tour company decides on the night where to go.`;
+
+  function inlandBasic(n) {
+    const v = inlandView(n);
+    if (!v) return '';
+    return `<details class="binland"><summary><span class="${v.cls}">🚗 ${esc(v.text)}</span></summary>
+      ${inlandTable(n.inland)}<div class="b-sub">${INLAND_NOTE(n.inland)}</div></details>`;
+  }
+
+  function inlandAdvanced(n) {
+    const v = inlandView(n);
+    if (!v) return '';
+    return `<div class="inl"><h4>Inland cloud check · tour areas from ${esc(n.inland.port)}</h4>
+      <p class="${v.cls}">🚗 ${esc(v.text)}</p>${inlandTable(n.inland)}<p class="hint">${INLAND_NOTE(n.inland)}</p></div>`;
+  }
+
   function hoursTable(n) {
     const hasMet = metCovers(n);
     const rows = n.hourly.filter((h) => h.sun < -3 && h.cloud_met != null);
@@ -563,6 +618,7 @@
         </div>
       </div>
       ${hoursTable(n)}
+      ${inlandAdvanced(n)}
       ${formula(n)}
       <details class="table"><summary>Show all data (table)</summary><div class="tbl-wrap"><table>
         <tr><th>Time</th><th>Where</th><th>Sun</th><th>Clear chance (models)</th><th>Cloud models</th><th>Cloud MET</th><th>Kp forecast</th><th>Kp needed</th><th>Activity</th><th>Moon</th></tr>
@@ -2294,6 +2350,7 @@
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
           `<div class="bf ${f.cls}"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
+        ${inlandBasic(t.n)}
         <div class="bline">${esc(v.line)}</div>
         ${basicChange(t.n.date, v) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date, v))}</div>` : ''}
         <div class="b-sub">${esc(darkText(t.n))}</div>
@@ -2345,6 +2402,7 @@
           <b>Low</b> = a calm field and less activity than this place needs.
           Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
           <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
+        <p><b>Inland</b> (Tromsø 15 Oct, Alta 16–17 Oct, and Tromsø for practice): MET's clouds at the usual chase-tour areas behind the coastal mountains, where it is often clearer (from Tromsø: Nordkjosbotn, Skibotn, Kilpisjärvi; from Alta: Gargia, Masi, Kautokeino). "Clearer inland" = one of them has a clear stretch (2+ hours ≤40% cloud) still to come and here has none, or one at least 2 hours shorter. Tap the line for the hours.</p>
         <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
       </details>

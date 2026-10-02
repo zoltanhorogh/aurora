@@ -14,6 +14,9 @@ Live at **https://zoltanhorogh.github.io/aurora/**
   - clear sky: MET Norway's 2.5 km model once it covers the night (≥ 2 consecutive dark hours with ≤ 40 % cloud);
     further ahead the share of ensemble members with such a gap, blended with the ERA5 October climatology
     (`data/climatology.json`) by lead time
+- Inland cloud check: for the dark hours in Tromsø and Alta (and Tromsø every night before the cruise) MET Norway's
+  clouds at the usual chase-tour areas behind the coastal mountains (`INLAND` in `update.py`); the page says whether
+  one of them has a clear stretch still to come that here has not.
 - A night is over when its darkness ends at its place; it then keeps its last forecast, and the page shows what
   happened instead (MET Norway's cloud analysis, GFZ Hp30, the all-sky camera AI, the FMI magnetometers).
 - `scripts/alert.py` runs every 10 minutes after `sky_log.py` (all-sky camera AI, the most auroral picture of each

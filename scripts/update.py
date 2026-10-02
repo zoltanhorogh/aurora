@@ -705,6 +705,57 @@ def carry_past_clouds(nights, mc, now):
         fill(n, (n.get("spot"), n["date"]))
 
 
+# ---------------------------------------------------------------- inland cloud check
+# Chase tours from Tromsø and Alta drive inland, behind the coastal mountains, where it is often clearer (the clouds
+# come in from the Atlantic and rain out on the mountains). For the dark hours in those ports: MET's hourly clouds at
+# the usual tour areas next to the port's own, so the page can say whether a tour inland has a clearer sky tonight.
+# Drive times are rough, one way. The page decides the answer itself from the hours still to come.
+
+INLAND = {
+    "Tromsø": [("Nordkjosbotn", 69.22, 19.55, "~1 h"), ("Skibotn", 69.39, 20.27, "~1.5 h"),
+               ("Kilpisjärvi", 69.05, 20.79, "~2.5 h")],
+    "Alta": [("Gargia", 69.80, 23.48, "~30 min"), ("Masi", 69.46, 23.70, "~1.5 h"),
+             ("Kautokeino", 69.01, 23.04, "~2 h")],
+}
+_inland_met = {}  # one MET request per tour area and run, shared by all nights
+
+
+def inland_check(n, now, prev=None):
+    """The night's dark hours in Tromsø or Alta with the clouds here and at each tour area (None if the night has no
+    such hours or MET does not cover it yet). Hours that are over keep their last forecast from the previous run."""
+    rows = [h for h in n["hourly"] if h["dark"] and h["state"] == "port" and h["place"] in INLAND]
+    if not rows or not n["clear"]["source"].startswith("MET Norway"):
+        return None
+    port = rows[0]["place"]
+    rows = [h for h in rows if h["place"] == port]
+    old = {s["name"]: dict(zip((prev or {}).get("t", []), s["cloud"])) for s in (prev or {}).get("spots", [])}
+    spots = []
+    for name, lat, lon, drive in INLAND[port]:
+        if (lat, lon) not in _inland_met:
+            _inland_met[(lat, lon)] = fetch_met(lat, lon) or {}
+        met = _inland_met[(lat, lon)]
+        cloud = []
+        for h in rows:
+            v = met.get(h["t"])
+            if v is None and parse_utc(h["t"]) < now:
+                v = old.get(name, {}).get(h["t"])
+            cloud.append(round(v) if v is not None else None)
+        spots.append({"name": name, "drive": drive, "lat": lat, "lon": lon, "cloud": cloud})
+    return {"port": port, "t": [h["t"] for h in rows], "local": [h["local"] for h in rows],
+            "here": [round(h["cloud_met"]) if h["cloud_met"] is not None else None for h in rows], "spots": spots}
+
+
+def add_inland(nights, mc, now):
+    old = load_json(DATA / "latest.json", {}) or {}
+    prev = {("cruise", n["date"]): n.get("inland") for n in old.get("nights", [])}
+    for n in (old.get("model_check") or {}).get("nights", []):
+        prev[(n.get("spot"), n["date"])] = n.get("inland")
+    for key, n in [(("cruise", n["date"]), n) for n in nights] + [((n.get("spot"), n["date"]), n) for n in mc["nights"]]:
+        if night_end(n) <= now:
+            continue  # a night that is over keeps what it had
+        n["inland"] = inland_check(n, now, prev.get(key))
+
+
 # ---------------------------------------------------------------- tonight log
 # The basic view's answer for tonight (cruise night on board, Tromsø before the cruise) at every run,
 # so the page can say "changed at 15:30: was GO 21-23, now NO" and why (the clouds).
@@ -806,6 +857,10 @@ def main():
               else score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim) for d in night_dates(it)]
     mc = model_check(now, kp3_map, kp27_map, daily, cmes, clim)
     carry_past_clouds(nights, mc, now)
+    try:
+        add_inland(nights, mc, now)
+    except Exception as e:  # a nice-to-have: must not stop the forecast
+        print("inland cloud check failed:", e)
     met_expected(nights + mc["nights"], now)
     update_verification(now, mc)
     update_cruise_log(now, nights, route)
