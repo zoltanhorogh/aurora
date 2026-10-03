@@ -48,7 +48,7 @@
   let LAST = null;   // last_night.json (summary of the last finished night up north)
   let TLOG = null;   // tonight_log.json (tonight's basic answer at every forecast run)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
-  let MAG = null;    // mag.json (FMI magnetometer swing, several times an hour after dark)
+  let MAG = null;    // mag.json (FMI magnetometer swing, several times an hour, day and night)
   let SHOCK = null;  // shock.json (jumps of the solar wind at the L1 satellite: a CME arriving)
   let selected = null;
   let bzPts = null;  // loaded on demand
@@ -1136,14 +1136,14 @@
 
   function updateMagTile() {
     const st = MAG && MAG.stations;
-    if (!st || !Object.keys(st).length) return setTile('lt-mag', '–', 'no reading yet (logged after dark only)');
+    if (!st || !Object.keys(st).length) return setTile('lt-mag', '–', 'no reading yet');
     const [lat, lon] = herePos();
     const R = Math.PI / 180;
     const km = (x) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(x.lat * R) + Math.cos(lat * R) * Math.cos(x.lat * R) * Math.cos((lon - x.lon) * R)));
     const best = Object.values(st).reduce((b, x) => (!b || km(x) < km(b) ? x : b), null);
     if (km(best) > 300) return setTile('lt-mag', '–', 'no station near the ship here: use Kp, Hp30 and the map');
     const old = Date.now() - new Date(best.t) > 40 * 60e3;
-    const where = `${esc(best.name)} (${Math.round(km(best) / 10) * 10} km) · ${hm(best.t)} ship time${old ? ' (old: logged after dark only)' : ''}`;
+    const where = `${esc(best.name)} (${Math.round(km(best) / 10) * 10} km) · ${hm(best.t)} ship time${old ? ' (old: the robot has not run for a while)' : ''}`;
     const m = magStory(best);
     if (!m) return setTile('lt-mag', `${best.swing_60}<small> nT</small>`, `swing in the last hour · ${where}`);
     // + = field pushed up (energy building), − = dip (substorm, aurora moving); arrow = last 10 minutes
@@ -1531,8 +1531,8 @@
 
     const lastT = st && st.t ? new Date(st.t) : null;
     $('#mag-chart-note').innerHTML = `Blue line (left scale): the horizontal magnetic field at ${st ? esc(st.name) : 'the nearby station'} (FMI), about ${magSite === 'tro2a' ? 100 : 70} km from ${area}, compared with its quiet level: below −50 nT = aurora active overhead, below −200 nT = strong. It can dip less or more than the ${magSite === 'tro2a' ? 'Tromsø' : 'Sørøya'} picture above: different spot under the aurora. Green bars (right scale): Hp30, the same kind of measurement averaged over the whole planet.`
-      + (!st ? ' <b>No magnetometer data yet</b> (the robot logs it after dark).'
-        : t1 - lastT > 40 * 60e3 ? ` The line ends at ${hm(lastT)}: the robot logs it after dark only.` : '');
+      + (!st ? ' <b>No magnetometer data yet</b>.'
+        : t1 - lastT > 60 * 60e3 ? ` The line ends at ${hm(lastT)}: the robot has not logged since (it runs several times an hour).` : '');
   }
 
   // Collapsed extra: the same "overhead now" numbers for every port and every at-sea night position.

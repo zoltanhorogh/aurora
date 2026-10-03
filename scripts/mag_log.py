@@ -2,7 +2,8 @@
 
 Source: FMI (Finnish Meteorological Institute) IMAGE network, 10-second real-time data, ~1 min delay,
 licence CC BY 4.0. The browser cannot read it directly (no CORS), so this runs from the alert workflow
-(due every 10 min, in practice every 15-30) and writes data/mag.json. Only in the dark at Tromsø: in daylight aurora cannot be seen anyway.
+(due every 10 min, in practice every 15-30) and writes data/mag.json, day and night: the page's chart runs on like the
+Tromsø magnetogram above it (it used to stop at dawn, which looked broken; user, 3 Oct 2026).
 
 Stations near the route: Kilpisjärvi (~100 km from Tromsø) and Masi (~70 km south of Alta).
 Swing = max − min of the horizontal field (nT); a substorm (active aurora overhead) shows as a sudden dip.
@@ -12,12 +13,10 @@ Output: data/mag.json  {"updated": ..., "stations": {"KIL": {..., "series": {"t0
 import math
 from datetime import datetime, timedelta, timezone
 
-from common import DATA, http_get, iso, save_json, sun_alt, utcnow
+from common import DATA, http_get, iso, save_json, utcnow
 
 BASE = "https://space.fmi.fi/image/realtime/UT/{s}/{s}data_24.txt"
 STATIONS = {"KIL": ("Kilpisjärvi", 69.02, 20.79), "MAS": ("Masi", 69.46, 23.70)}
-TROMSO = (69.65, 18.96)
-DARK_SUN_ALT = -3  # degrees; a little before nautical twilight is enough to start logging
 STEP_MIN = 1
 
 
@@ -63,9 +62,6 @@ def series(rows):
 
 def main():
     now = utcnow()
-    if sun_alt(now, *TROMSO) > DARK_SUN_ALT:
-        print("daylight at Tromsø — nothing to log")
-        return
     out = {"updated": iso(now), "stations": {}}
     for code, (name, lat, lon) in STATIONS.items():
         try:
