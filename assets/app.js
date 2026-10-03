@@ -1247,8 +1247,8 @@
     updateMagTile();
 
     // Everything loads automatically (the ship has fast Starlink-based Wi-Fi); ~2.5 MB per page view.
-    $('#bz-panel').innerHTML = `<h3>Solar wind Bz, last 24 h</h3>
-      <p class="hint">Negative (south) Bz lets solar-wind energy in; 20+ minutes below −5 nT often triggers aurora within the hour.</p>
+    $('#bz-panel').innerHTML = `<h3>Solar wind, last 24 h</h3>
+      <p class="hint">Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. <b>Bz</b> negative (south) lets the energy in: 20+ minutes below −5 nT often triggers aurora within the hour. A CME's front = a sudden step up of field, speed and density together (☄️ line). <a href="https://www.swpc.noaa.gov/products/real-time-solar-wind" target="_blank" rel="noopener">NOAA's own solar wind plot ↗</a></p>
       <button class="btn" id="bz-btn">Loading…</button><div class="chart" id="bz-chart"></div>`;
     $('#bz-btn').addEventListener('click', loadBz);
     loadBz();
@@ -1391,7 +1391,9 @@
     // the same thresholds as the hourly night log (camWord), so "now" and "last night" never disagree
     if (aurora >= 50) return ['good', `Aurora now (${type.toLowerCase()})`, aurora];
     if (bright >= 30) return ['moon', `Possible aurora (${Math.round(bright)}%), bright sky`, aurora];
-    if ((a['Dusk/Dawn'] || 0) >= 50 && sunAlt != null && sunAlt < -10) return ['moon', 'Bright sky (moonlight)', aurora];
+    // a bright sky with the sun less than 14 degrees down is dawn or dusk (Skibotn 05:15 on 3 Oct 2026, sun -11 degrees,
+    // was called moonlight); deeper in the night it is the moon
+    if ((a['Dusk/Dawn'] || 0) >= 50 && sunAlt != null && sunAlt < -14) return ['moon', 'Bright sky (moonlight)', aurora];
     if ((a['Dusk/Dawn'] || 0) >= 50) return ['day', 'Daylight / twilight', aurora];
     if ((a.Clear || 0) >= 50) return ['clear', 'Clear sky, no aurora', aurora];
     if ((a.Cloudy || 0) >= 50) return ['cloud', 'Cloudy', aurora];
@@ -1615,11 +1617,21 @@
     const btn = $('#bz-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
     try {
-      const raw = await getJSON(`${SWPC}/json/rtsw/rtsw_mag_1m.json`);
-      const rows = raw.filter((r) => r.active && r.bz_gsm != null).map((r) => [new Date(r.time_tag + 'Z').getTime(), r.bz_gsm]).sort((a, b) => a[0] - b[0]);
+      const [raw, wind] = await Promise.all([getJSON(`${SWPC}/json/rtsw/rtsw_mag_1m.json`), getJSON(`${SWPC}/json/rtsw/rtsw_wind_1m.json`).catch(() => [])]);
+      // 10-minute means of the active satellite: Bz and Bt (field), speed and density (plasma)
       const bins = new Map();
-      for (const [t, v] of rows) { const k = Math.floor(t / 600e3) * 600e3; const b = bins.get(k) || [0, 0]; b[0] += v; b[1]++; bins.set(k, b); }
-      bzPts = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([t, [s, n]]) => [t, s / n]);
+      const add = (r, k, v) => {
+        if (!r.active || v == null) return;
+        const b = Math.floor(new Date(r.time_tag + 'Z').getTime() / 600e3) * 600e3;
+        const o = bins.get(b) || {};
+        (o[k] = o[k] || []).push(v);
+        bins.set(b, o);
+      };
+      for (const r of raw) { add(r, 'bz', r.bz_gsm); add(r, 'bt', r.bt); }
+      for (const r of wind) { add(r, 'v', r.proton_speed); add(r, 'n', r.proton_density); }
+      const mean = (a) => (a && a.length ? a.reduce((s, x) => s + x, 0) / a.length : null);
+      bzPts = [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([t, o]) => ({ t, bz: mean(o.bz), bt: mean(o.bt), v: mean(o.v), n: mean(o.n) }))
+        .filter((p) => p.bz != null);
       if (btn) btn.remove();
       drawBz();
     } catch (e) {
@@ -1627,30 +1639,61 @@
     }
   }
 
+  // Three rows over one time axis: Bt and Bz (nT), speed (km/s), density (per cm³, log); ☄️ = a CME front the robot found
   function drawBz() {
     const cont = $('#bz-chart');
     if (!bzPts || !cont) return;
     const pts = bzPts;
-    const W = widthOf(cont), H = 220, ml = 34, mr = 6, mt = 10, mb = 26;
-    const pw = W - ml - mr, ph = H - mt - mb;
-    const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
-    const lim = Math.max(10, Math.ceil(Math.max(...pts.map((p) => Math.abs(p[1]))) / 5) * 5);
+    const W = widthOf(cont), ml = 40, mr = 8, mt = 8, gap = 22, mb = 26, hB = 150, hV = 74, hN = 74;
+    const H = mt + hB + gap + hV + gap + hN + mb;
+    const pw = W - ml - mr;
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
     const x = (t) => ml + ((t - t0) / (t1 - t0)) * pw;
-    const y = (v) => mt + ph / 2 - (v / lim) * (ph / 2);
-    let g = `<rect x="${ml}" y="${y(-5)}" width="${pw}" height="${y(-lim) - y(-5)}" fill="rgba(12,163,12,0.08)"/>`;
-    g += `<text x="${ml + 4}" y="${y(-lim) - 4}" class="lbl">below −5: good for aurora</text>`;
-    for (let v = -lim; v <= lim; v += 5) g += `<line x1="${ml}" x2="${ml + pw}" y1="${y(v)}" y2="${y(v)}" stroke="${v === 0 ? '#555' : '#2c2c2a'}"/><text x="${ml - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    const lim = Math.max(10, Math.ceil(Math.max(...pts.map((q) => Math.max(Math.abs(q.bz), q.bt || 0))) / 5) * 5);
+    const yB = (v) => mt + hB / 2 - (v / lim) * (hB / 2);
+    const top2 = mt + hB + gap, top3 = top2 + hV + gap;
+    const vs = pts.map((q) => q.v).filter((v) => v != null);
+    const vMax = Math.max(600, Math.ceil(Math.max(0, ...vs) / 100) * 100), vMin = 200;
+    const yV = (v) => top2 + hV - ((Math.min(vMax, Math.max(vMin, v)) - vMin) / (vMax - vMin)) * hV;
+    const yN = (n) => top3 + hN - ((Math.log10(Math.min(100, Math.max(0.1, n))) + 1) / 3) * hN;
+    const line = (y1, k) => `<line x1="${ml}" x2="${ml + pw}" y1="${y1}" y2="${y1}" stroke="${k ? '#555' : '#2c2c2a'}"/>`;
+    let g = `<rect x="${ml}" y="${yB(-5)}" width="${pw}" height="${yB(-lim) - yB(-5)}" fill="rgba(12,163,12,0.08)"/>`;
+    for (let v = -lim; v <= lim; v += 5) g += line(yB(v), v === 0) + `<text x="${ml - 6}" y="${yB(v) + 4}" text-anchor="end">${v}</text>`;
+    g += `<text x="${ml + 4}" y="${mt + 12}" class="lbl">Bt (white) · Bz (blue), nT · green: below −5, good for aurora</text>`;
+    for (let v = 300; v <= vMax; v += 100) g += line(yV(v), false) + `<text x="${ml - 6}" y="${yV(v) + 4}" text-anchor="end">${v}</text>`;
+    g += `<text x="${ml + 4}" y="${top2 - 6}" class="lbl">Speed, km/s · 450+ as in storms</text>`;
+    for (const n of [0.1, 1, 10, 100]) g += line(yN(n), false) + `<text x="${ml - 6}" y="${yN(n) + 4}" text-anchor="end">${n}</text>`;
+    g += `<text x="${ml + 4}" y="${top3 - 6}" class="lbl">Density, particles per cm³ (calm 2–10)</text>`;
     const stepH = pw < 450 ? 6 : 3;
     for (let t = Math.ceil(t0 / (stepH * 3600e3)) * stepH * 3600e3; t <= t1; t += stepH * 3600e3) g += `<text x="${x(t)}" y="${H - 8}" text-anchor="middle">${hm(t)}</text>`;
+    for (const e of (SHOCK && SHOCK.events) || []) {
+      const t = new Date(e.at).getTime();
+      if (t < t0 || t > t1) continue;
+      g += `<line x1="${x(t)}" x2="${x(t)}" y1="${mt}" y2="${top3 + hN}" stroke="#e05a5a" stroke-width="1.5"/><text x="${x(t) + 4}" y="${mt + hB - 6}" class="lbl" style="fill:#f08a8a">☄️ CME ${hm(t)}</text>`;
+    }
     g += '<g class="hl"></g>';
-    g += `<polyline points="${pts.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ')}" fill="none" stroke="#3987e5" stroke-width="2" stroke-linejoin="round"/>`;
-    cont.innerHTML = svgTag(W, H, 'Solar wind Bz, 10-minute means', g) + '<div class="hint">10-minute means, ship time. Source: NOAA real-time solar wind (L1 point, ~1 h upstream).</div>';
-    const xs = pts.map((p) => x(p[0]));
+    // one polyline per unbroken stretch of a value
+    const path = (k, y, color, w) => {
+      let d = '', on = false;
+      for (const q of pts) {
+        if (q[k] == null) { on = false; continue; }
+        d += `${on ? 'L' : 'M'}${x(q.t).toFixed(1)},${y(q[k]).toFixed(1)}`;
+        on = true;
+      }
+      return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${w}" stroke-linejoin="round"/>`;
+    };
+    g += path('bt', yB, '#d9d9d9', 1.5) + path('bz', yB, '#3987e5', 2) + path('v', yV, '#e5c14a', 1.8) + path('n', yN, '#e8743b', 1.8);
+    cont.innerHTML = svgTag(W, H, 'Solar wind, 10-minute means', g) + '<div class="hint">10-minute means, ship time. Source: NOAA real-time solar wind (L1 point).</div>';
+    const xs = pts.map((q) => x(q.t));
     const bands = xs.map((cx, i) => [i === 0 ? ml : (xs[i - 1] + cx) / 2, i === xs.length - 1 ? ml + pw : (cx + xs[i + 1]) / 2]);
     const hl = cont.querySelector('.hl');
-    bindHover(cont, W, bands, (i) => `<b>${hm(pts[i][0])}</b><div class="row"><span>Bz</span><span>${pts[i][1].toFixed(1)} nT</span></div>`,
-      (i) => { hl.innerHTML = i < 0 ? '' : `<circle cx="${xs[i]}" cy="${y(pts[i][1])}" r="4.5" fill="#3987e5" stroke="#16171a" stroke-width="2"/>`; });
+    const f = (v, d, u) => (v == null ? '–' : `${v.toFixed(d)} ${u}`);
+    bindHover(cont, W, bands, (i) => `<b>${hm(pts[i].t)}</b><div class="row"><span>Bz</span><span>${f(pts[i].bz, 1, 'nT')}</span></div>
+      <div class="row"><span>Bt</span><span>${f(pts[i].bt, 1, 'nT')}</span></div><div class="row"><span>Speed</span><span>${f(pts[i].v, 0, 'km/s')}</span></div>
+      <div class="row"><span>Density</span><span>${f(pts[i].n, 1, '/cm³')}</span></div>`,
+      (i) => { hl.innerHTML = i < 0 ? '' : `<line x1="${xs[i]}" x2="${xs[i]}" y1="${mt}" y2="${top3 + hN}" stroke="#aaa" stroke-dasharray="3 3"/>`; });
   }
+
 
   // ------------------------------------------------------------ map
   function renderMap() {
