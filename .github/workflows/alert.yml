@@ -46,7 +46,7 @@ jobs:
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # add only files that exist: one missing path (alert_state.json before the cruise) makes git add skip them all
-          for f in data/alert_state.json data/hp30.json data/sky_obs.json data/mag.json; do [ -f "$f" ] && git add "$f"; done
+          for f in data/alert_state.json data/hp30.json data/sky_obs.json data/mag.json data/shock.json; do [ -f "$f" ] && git add "$f"; done
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "Alert state $(date -u +'%Y-%m-%d %H:%M') UTC"
           for i in 1 2 3; do git pull --rebase -X theirs && git push && break; sleep 5; done

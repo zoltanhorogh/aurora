@@ -24,7 +24,7 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="assets/style.css?v=75">
+<link rel="stylesheet" href="assets/style.css?v=76">
 </head>
 <body>
 <div class="aurora-glow"></div>
@@ -177,6 +177,7 @@
           <li><b>Kp forecast vs. Kp needed</b> – "forecast" is the activity expected for that hour; "needed" is the level at which aurora is clearly visible where the ship is at that hour (it depends on the ship's geomagnetic latitude, so it rises as we sail south). When the forecast is at or above the needed level, activity is on our side. The <b>activity chance</b> is the probability that the real Kp reaches the needed level; it stays above zero even when the forecast is lower, because forecasts days ahead are often off by 1–2 points.</li>
           <li><b>Bz</b> – direction of the solar wind's magnetic field. <b>Negative (south) for 20+ minutes = the door is open</b>; the stronger and longer, the better.</li>
           <li><b>Solar wind speed</b> – above ~500 km/s helps.</li>
+          <li><b>Density and Bt</b> – how many particles the solar wind carries (per cm³, calm 2–10) and how strong its magnetic field is (in nanotesla, nT; calm ~5, storms 10–30+). Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. A sudden jump of speed, density and Bt together = a CME's front arriving (☄️ alert).</li>
           <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot.</li>
           <li><b>27-day recurrence</b> – the Sun turns every ~27 days, so what happened 27 days before a night often repeats.</li>
           <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp.</li>
@@ -227,6 +228,6 @@
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="assets/app.js?v=75"></script>
+<script src="assets/app.js?v=76"></script>
 </body>
 </html>

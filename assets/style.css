@@ -95,6 +95,7 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 #storm { margin-bottom: 14px; border-color: rgba(242,194,48,.45); }
 #storm h3 { margin-top: 0; color: #f2c230; }
 #storm p { font-size: 14px; }
+#storm .shock { color: #f5d36b; }
 #storm .why { color: var(--muted); font-size: 12px; }
 #storm .ok { color: #5fd35f; }
 table.storm td, table.storm th { text-align: left; white-space: normal; }

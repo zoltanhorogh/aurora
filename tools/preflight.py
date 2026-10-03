@@ -260,7 +260,7 @@ INJECT = r"""<script>
       if (b.querySelector('.b-verdict')) check('basic aurora and sky tiles', b.querySelectorAll('#basic > .b-card:not(#b-last) .bfx .bf').length === 2);
       if (b.querySelector('#b-last')) check('basic last-night card has its two tiles', b.querySelectorAll('#b-last .bfx .bf').length === 2);
       const bst = b.querySelector('#b-storm');
-      if (bst) check('basic storm line reads as one sentence', /^⚡ NOAA storm watch: (minor|moderate|strong|severe|extreme) storm \(G\d, Kp \d\.\d\) expected tonight \d\d:\d\d–\d\d:\d\d/.test(bst.textContent.trim()), bst.textContent.trim());
+      if (bst) check('basic storm line reads as one sentence', /^(☄️ CME arriving about \d\d:\d\d \((weak|moderate|strong)\)\. )?⚡ NOAA storm watch: (minor|moderate|strong|severe|extreme) storm \(G\d, Kp \d\.\d\) expected tonight \d\d:\d\d–\d\d:\d\d|^☄️ CME arriving about \d\d:\d\d \((weak|moderate|strong)\)\. Details/.test(bst.textContent.trim()), bst.textContent.trim());
       const inl = b.querySelector('.binland');
       if (inl) check('basic inland line: one answer and its table', /^🚗 Inland: (clearer at|no clearer than here|cloudy too)/.test(inl.querySelector('summary').textContent.trim())
         && inl.querySelectorAll('table.itab tr').length === 5, inl.querySelector('summary').textContent.trim());
@@ -445,6 +445,21 @@ def check_mag_alert(tmp, base_env, problems):
     if not ok:
         problems.append(f"magnetometer alert on board (1 Oct 22:58): no alert with the magnetometer: {(r.stderr or r.stdout)[-300:]}")
     lint_messages(r.stdout, "magnetometer alert on board", problems)
+
+
+def check_wind_jump(problems):
+    """The weak CME arrival of 3 Oct 2026 (tools/fixtures, NOAA 1-minute L1 data 22-03 UTC) is found once, at 01:28."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import alert  # noqa: E402
+    rows = json.loads((ROOT / "tools" / "fixtures" / "rtsw_2026-10-03.json").read_text(encoding="utf-8"))["rows"]
+    ev = alert.wind_jumps(rows)
+    ok = len(ev) == 1 and "2026-10-03T01:25" <= ev[0]["at"] <= "2026-10-03T01:32"
+    print(f"  {'ok ' if ok else 'FAIL'} solar wind jump (CME arrival) found once, 3 Oct 01:28 UTC")
+    if not ok:
+        problems.append(f"solar wind jump check: expected one jump at ~01:28 UTC on 3 Oct, got {ev}")
+    if ev:
+        title, msg = alert.shock_message(ev[0])
+        lint_messages(f'"message": "{title} {msg}",\n', "CME arrival alert", problems)
 
 
 def check_notify_flipflop(tmp, base_env, problems):
@@ -735,6 +750,7 @@ def main():
             run_script("alert.py", ["--dry-run", "--test"], env, problems, label)
             check_mag_alert(tmp, base_env, problems)
             check_notify_flipflop(tmp, base_env, problems)
+            check_wind_jump(problems)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [

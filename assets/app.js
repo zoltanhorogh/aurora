@@ -49,6 +49,7 @@
   let TLOG = null;   // tonight_log.json (tonight's basic answer at every forecast run)
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let MAG = null;    // mag.json (FMI magnetometer swing, several times an hour after dark)
+  let SHOCK = null;  // shock.json (jumps of the solar wind at the L1 satellite: a CME arriving)
   let selected = null;
   let bzPts = null;  // loaded on demand
 
@@ -569,6 +570,20 @@
       return { ...p, g: gLevel(p.kp), cause: stormCause(p), place, need: kpNeedAt(lat, lon), darkTxt };
     });
   }
+  // The last jump of the solar wind at the L1 satellite within `hours` (the robot's shock.json)
+  const recentShock = (hours) => {
+    const ev = ((SHOCK && SHOCK.events) || []).filter((e) => Date.now() - new Date(e.at) < hours * 3600e3);
+    return ev.length ? ev[ev.length - 1] : null;
+  };
+  // when the front reaches Earth: 1.5 million km from L1 at the measured speed (300 km/s: ~85 minutes, 600 km/s: ~40)
+  const shockReach = (e) => new Date(e.at).getTime() + (1.5e6 / Math.max(e.after.v, 200)) * 1000;
+  // Basic: a short tag only (the user: "a basic oldalra nem kell ennyire bonyolult"); the numbers are in the advanced view
+  const shockTag = (e) => `☄️ <b>CME arriving about ${hm(shockReach(e))}</b> (${e.level})`;
+  const shockText = (e) => {
+    const b = e.before, a = e.after;
+    const reach = shockReach(e);
+    return `${e.level} jump: ${b.v} → ${a.v} km/s, density ×${Math.round(a.n / b.n)}, Bt ${Math.round(b.bt)} → ${Math.round(a.bt)} nT · reaches Earth about ${hm(reach)}`;
+  };
   const stormWhen = (p) => `${dayLabel(shipDate(p.a).toISOString().slice(0, 10))} ${hm(p.a)}–${hm(p.b)}`;
   const stormHere = (p) => (p.kp - p.need >= 2 ? 'if it comes and the sky is clear, a bright, moving display'
     : p.kp >= p.need ? 'if it comes, it should reach here too' : 'probably not enough this far south');
@@ -580,8 +595,12 @@
     if (!dark.length) return '';
     const a = Math.min(...dark), b = Math.max(...dark) + 3600e3;
     const p = stormPeriods().find((x) => x.a < b && x.b > a);
+    const sh = recentShock(6);
+    if (!p && sh) {
+      return `<div class="bstorm" id="b-storm" role="button" tabindex="0">${shockTag(sh)}. <span class="btap">Details ›</span></div>`;
+    }
     if (!p) return '';
-    return `<div class="bstorm" id="b-storm" role="button" tabindex="0">⚡ <b>NOAA storm watch:</b> ${G_WORD[p.g]} storm (${p.g}, Kp ${p.kp.toFixed(1)}) expected tonight ${hm(p.a)}–${hm(p.b)}${p.cause ? `, from ${p.cause}` : ''}. About ${n.kp_req.toFixed(1)} is enough here: ${stormHere({ ...p, need: n.kp_req })}. <span class="btap">Details ›</span></div>`;
+    return `<div class="bstorm" id="b-storm" role="button" tabindex="0">${sh ? `${shockTag(sh)}. ` : ''}⚡ <b>NOAA storm watch:</b> ${G_WORD[p.g]} storm (${p.g}, Kp ${p.kp.toFixed(1)}) expected tonight ${hm(p.a)}–${hm(p.b)}${p.cause ? `, from ${p.cause}` : ''}. About ${n.kp_req.toFixed(1)} is enough here: ${stormHere({ ...p, need: n.kp_req })}. <span class="btap">Details ›</span></div>`;
   }
 
   // Advanced: the storm periods of the next days, NOAA's reasoning, the CME model and what is measured now
@@ -589,21 +608,24 @@
     const el = $('#storm');
     if (!el) return;
     const P = stormPeriods();
-    if (!P.length || shipNow().phase === 'over') { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const sh = recentShock(12);
+    if ((!P.length && !sh) || shipNow().phase === 'over') { el.style.display = 'none'; el.innerHTML = ''; return; }
     const sw = D.space_weather || {};
     const cmes = (sw.cmes || []).filter((c) => new Date(c.arrival).getTime() > Date.now() - 24 * 3600e3);
     el.style.display = '';
     el.innerHTML = `<h3>⚡ NOAA storm watch</h3>
-      <p class="hint" style="margin-top:0">NOAA's 3-day forecast has storm-level activity coming: G1 or more = Kp 4.7+. Scale: G1 minor · G2 moderate · G3 strong · G4 severe · G5 extreme. Times are ship time.</p>
+      ${sh ? `<p class="shock">☄️ <b>CME arrived at the solar wind satellite ${hm(sh.at)}</b> (${dayLabel(shipDate(sh.at).toISOString().slice(0, 10))}): ${esc(shockText(sh))}.</p>` : ''}
+      ${P.length ? `<p class="hint" style="margin-top:0">NOAA's 3-day forecast has storm-level activity coming: G1 or more = Kp 4.7+. Scale: G1 minor · G2 moderate · G3 strong · G4 severe · G5 extreme. Times are ship time.</p>
       <div class="tbl-wrap"><table class="storm">
         <tr><th>When</th><th>Level</th><th>Cause</th><th>Needed there</th></tr>
         ${P.map((p) => `<tr><td>${stormWhen(p)}</td><td>${p.g} ${G_WORD[p.g]} · Kp ${p.kp.toFixed(1)}</td><td>${esc(p.cause || 'not stated')}</td>
           <td>${esc(p.place)} ${p.need.toFixed(1)} → ${p.kp - p.need >= 2 ? '<span class="ok">well above</span>' : p.kp >= p.need ? '<span class="ok">enough</span>' : 'below'}${p.darkTxt ? `<br><span class="why">${p.darkTxt}</span>` : ''}</td></tr>`).join('')}
-      </table></div>
+      </table></div>` : '<p class="hint" style="margin-top:0">No storm level in NOAA\'s 3-day forecast. Times are ship time.</p>'}
       ${sw.three_day && sw.three_day.rationale ? `<p><b>NOAA's reasoning:</b> ${esc(sw.three_day.rationale)}</p>` : ''}
       ${cmes.length ? `<p><b>NASA CME model:</b> ${cmes.map((c) => `modelled arrival ${dayLabel(shipDate(c.arrival).toISOString().slice(0, 10))} ${hm(c.arrival)}${c.glancing ? ' (glancing blow)' : ''}, Kp ${c.kp_min ?? '?'}–${c.kp_max ?? '?'}`).join(' · ')}</p>` : ''}
       <p id="storm-now"></p>
-      <p class="hint">The timing is often hours off: NOAA updates this forecast several times a day, and a CME can arrive many hours earlier or later than modelled, or miss. What is measured now shows whether it has started.</p>`;
+      <p class="hint">The timing is often hours off: NOAA updates this forecast several times a day, and a CME can arrive many hours earlier or later than modelled, or miss. What is measured now shows whether it has started.
+        The solar wind is measured by a satellite 1.5 million km towards the Sun (the L1 point), 40–85 minutes before it reaches Earth (the faster, the sooner): <b>speed</b> (calm 300–400 km/s), <b>density</b> (particles per cm³, calm 2–10; a CME's front packs them several times tighter), <b>Bt</b> (strength of its magnetic field in nanotesla, calm ~5) and <b>Bz</b> (the north–south part of that field: south, negative, opens the door). A CME arrival shows as a sudden jump of all of them; the robot checks for it several times an hour and sends a ☄️ alert.</p>`;
     updateStormNow();
   }
   function updateStormNow() {
@@ -615,7 +637,10 @@
       hp != null ? `Hp30 ${hp.toFixed(1)} (storm level 4.7+)` : null].filter(Boolean);
     if (!parts.length) { el.innerHTML = '<b>Now:</b> loading the live values…'; return; }
     const signs = [LIVE.sw >= 450 && 'fast solar wind', LIVE.bt >= 10 && 'strong magnetic field', hp != null && hp >= 4.67 && 'storm level measured'].filter(Boolean);
-    el.innerHTML = `<b>Now (${hm(Date.now())}):</b> ${parts.join(' · ')} → ${signs.length ? `<span class="ok">under way: ${signs.join(', ')}</span>` : 'no sign of it yet'}`;
+    // after a CME's front has arrived, "no sign" would contradict the arrival line: say it is weak so far
+    const sh = recentShock(12);
+    el.innerHTML = `<b>Now (${hm(Date.now())}):</b> ${parts.join(' · ')} → ${signs.length ? `<span class="ok">under way: ${signs.join(', ')}</span>`
+      : sh ? `arrived ${hm(sh.at)}, no storm level so far` : 'no sign of it yet'}`;
   }
 
   function hoursTable(n) {
@@ -1157,7 +1182,9 @@
 
   // Files the robot writes: Hp30 and the magnetometer swing.
   async function refreshRobotFiles() {
-    const [hp, mag] = await Promise.all([getJSON('data/hp30.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+    const [hp, mag, shock] = await Promise.all([getJSON('data/hp30.json').catch(() => null), getJSON('data/mag.json').catch(() => null),
+      getJSON('data/shock.json').catch(() => null)]);
+    if (shock) { SHOCK = shock; safe(renderStorm); }
     HP30 = newerHp30(HP30, hp && hp.series);
     if (mag) MAG = mag;
     updateHp30Tile();
@@ -2584,7 +2611,7 @@
           <b>Low</b> = a calm field and less activity than this place needs.
           Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
           <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
-        <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details.</p>
+        <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details. <b>☄️ CME arrived</b>: the solar wind jumped at the satellite 1.5 million km towards the Sun (speed, density and magnetic field together); it reaches Earth 40–85 minutes later, depending on its speed.</p>
         <p><b>Inland</b> (Tromsø 15 Oct, Alta 16–17 Oct, and Tromsø for practice): MET's clouds at the usual chase-tour areas behind the coastal mountains, where it is often clearer (from Tromsø: Nordkjosbotn, Skibotn, Kilpisjärvi; from Alta: Gargia, Masi, Kautokeino). "Clearer inland" = one of them has a clear stretch (2+ hours ≤40% cloud) still to come and here has none, or one at least 2 hours shorter. Tap the line for the hours.</p>
         <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
@@ -2634,6 +2661,7 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
+      SHOCK = await getJSON('data/shock.json').catch(() => null);
       if (D.trip && D.trip.watch_nights) KEY_NIGHTS = D.trip.watch_nights;
       [LOG, LAST, TLOG] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null),
         getJSON('data/tonight_log.json').catch(() => null)]);

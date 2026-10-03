@@ -10,6 +10,8 @@ During the cruise it sends:
     near Tromsø and Alta also when a nearby magnetometer shows a substorm (the fastest sign, minutes before
     Hp30 shows it: Masi -102 nT in 10 min at 22:49 on 1 Oct 2026, aurora seen along the coast right after).
 Under clouds a quieter "look for gaps" message instead.
+Before and during the cruise, day or night: a "☄️ CME arrived" message when the solar wind at the L1 satellite
+jumps (a CME's shock front), 40-85 minutes before it reaches Earth (1.5 million km at its speed); data/shock.json keeps it for the page.
 
 Usage:
   python alert.py            normal run (needs NTFY_TOPIC env var)
@@ -48,6 +50,18 @@ MAG_COOLDOWN_MIN = 30    # on board a new substorm may alert again after 30 min 
 CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows
 MAG_NEAR_KM = 300
 TEST_MAX_PER_NIGHT = 2
+SHOCK_DV = 20            # km/s: solar wind speed jump (median of 10 min after vs 20 min before, 5 min apart)
+SHOCK_N = 1.8            # density ratio after/before
+SHOCK_B = 1.3            # Bt ratio after/before
+SHOCK_LOOK_MIN = 90      # minutes of 1-minute data searched each run (runs are 15-30 min apart)
+
+_RTSW = {}  # NOAA's real-time solar wind files, fetched once per run
+
+
+def rtsw(name):
+    if name not in _RTSW:
+        _RTSW[name] = http_get_json(f"{SWPC}/json/rtsw/rtsw_{name}_1m.json")
+    return _RTSW[name]
 
 
 def global_readings():
@@ -63,7 +77,7 @@ def global_readings():
     except Exception as e:
         out["hp30_error"] = str(e)
     try:
-        mag = http_get_json(f"{SWPC}/json/rtsw/rtsw_mag_1m.json")
+        mag = rtsw("mag")
         cutoff = utcnow() - timedelta(minutes=30)
         bz = [m["bz_gsm"] for m in mag if m.get("active") and m.get("bz_gsm") is not None
               and parse_utc(m["time_tag"] + "Z") >= cutoff]
@@ -73,7 +87,7 @@ def global_readings():
     except Exception as e:
         out["bz_error"] = str(e)
     try:
-        wind = http_get_json(f"{SWPC}/json/rtsw/rtsw_wind_1m.json")
+        wind = rtsw("wind")
         cutoff = utcnow() - timedelta(minutes=30)
         v = [w["proton_speed"] for w in wind if w.get("active") and w.get("proton_speed") is not None
              and parse_utc(w["time_tag"] + "Z") >= cutoff]
@@ -86,6 +100,85 @@ def global_readings():
     except Exception as e:
         out["ovation_error"] = str(e)
     return out
+
+
+def solar_wind_rows():
+    """1-minute speed, density and Bt of the active L1 satellite, joined by minute."""
+    rows = {}
+    for r in rtsw("wind"):
+        if r.get("active") and r.get("proton_speed") is not None and r.get("proton_density") is not None:
+            rows.setdefault(r["time_tag"][:16], {}).update(t=r["time_tag"][:16], v=r["proton_speed"], n=r["proton_density"],
+                                                         src=r.get("source"))
+    for r in rtsw("mag"):
+        if r.get("active") and r.get("bt") is not None:
+            rows.setdefault(r["time_tag"][:16], {}).update(bt=r["bt"])
+    return [x for _, x in sorted(rows.items()) if "v" in x and "bt" in x]
+
+
+def wind_jumps(rows):
+    """Sudden jumps of the solar wind at the L1 satellite: a CME's shock front arriving. The median of the 10 minutes
+    after a moment against the 20 minutes before it (with 5 minutes left out): speed +20 km/s, density x1.8 and Bt
+    x1.3 together, the same satellite before and after. On 3 Oct 2026 (the weak CME of 28 Sep) it finds the one jump
+    of that day: 01:28 UTC, 272 -> 302 km/s, density 2.8 -> 15, Bt 3.7 -> 5.8 nT."""
+    def med(xs):
+        s = sorted(xs)
+        return s[len(s) // 2] if len(s) % 2 else (s[len(s) // 2 - 1] + s[len(s) // 2]) / 2
+    tt = [parse_utc(x["t"] + ":00Z") for x in rows]
+    out = []
+    for i, t in enumerate(tt):
+        pre = [rows[j] for j in range(len(rows)) if t - timedelta(minutes=25) <= tt[j] < t - timedelta(minutes=5)]
+        post = [rows[j] for j in range(i, len(rows)) if tt[j] < t + timedelta(minutes=10)]
+        if len(pre) < 8 or len(post) < 6 or {p["src"] for p in pre} != {p["src"] for p in post}:
+            continue
+        v1, n1, b1 = (med([p[k] for p in pre]) for k in ("v", "n", "bt"))
+        v2, n2, b2 = (med([p[k] for p in post]) for k in ("v", "n", "bt"))
+        if v2 - v1 < SHOCK_DV or n2 < SHOCK_N * n1 or b2 < SHOCK_B * b1:
+            continue
+        if out and t - parse_utc(out[-1]["at"]) <= timedelta(minutes=60):
+            continue  # the same front, found again from the next minute
+        # the moment of the jump: the first minute after which density or field has jumped
+        at = next((tt[j] for j in range(i, len(rows)) if rows[j]["n"] >= SHOCK_N * n1 or rows[j]["bt"] >= SHOCK_B * b1), t)
+        level = "strong" if b2 >= 15 or v2 >= 600 else "moderate" if b2 >= 10 or v2 >= 450 else "weak"
+        out.append({"at": iso(at), "level": level, "src": post[0]["src"],
+                    "before": {"v": round(v1), "n": round(n1, 1), "bt": round(b1, 1)},
+                    "after": {"v": round(v2), "n": round(n2, 1), "bt": round(b2, 1)}})
+    return out
+
+
+def travel_min(v):
+    """Minutes the solar wind needs from L1 (1.5 million km) to Earth at v km/s, to 5 minutes (300 km/s: 85)."""
+    return max(5, round(1.5e6 / max(v, 200) / 60 / 5) * 5)
+
+
+def shock_message(e, test=False):
+    when = (parse_utc(e["at"]) + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%H:%M")
+    b, a = e["before"], e["after"]
+    ratio = a["n"] / b["n"] if b["n"] else 0
+    title = ("🧪 TEST · " if test else "") + ("☄️ CME arrived: strong jump" if e["level"] == "strong" else "☄️ CME arrived at the solar wind satellite")
+    msg = (f"{when} ship time: solar wind {b['v']} → {a['v']} km/s, density ×{ratio:.0f}, Bt {b['bt']:.0f} → {a['bt']:.0f} nT "
+           f"({e['level']} jump; storms usually bring 450+ km/s and Bt 10+). It reaches Earth in about {travel_min(a['v'])} minutes. "
+           f"If Bz turns south (negative), the aurora brightens: watch Live.")
+    return title, msg
+
+
+def shock_check(now, dry, test):
+    """Once per jump: an alert (day or night) and data/shock.json for the page."""
+    try:
+        rows = [x for x in solar_wind_rows() if parse_utc(x["t"] + ":00Z") >= now - timedelta(minutes=SHOCK_LOOK_MIN)]
+    except Exception as e:  # the other alerts must still run
+        print("solar wind jump check failed:", e)
+        return
+    data = load_json(DATA / "shock.json", {}) or {}
+    known = data.get("events", [])
+    new = [e for e in wind_jumps(rows)
+           if all(abs(parse_utc(e["at"]) - parse_utc(k["at"])) > timedelta(minutes=60) for k in known)]
+    if not new:
+        return
+    e = new[-1]
+    title, msg = shock_message(e, test)
+    send(title, msg, priority={"strong": 5, "moderate": 4}.get(e["level"], 3), tags=["comet"], dry=dry, click=DASHBOARD + "#space")
+    if not dry:
+        save_json(DATA / "shock.json", {"updated": iso(now), "events": (known + new)[-5:]})
 
 
 def local_readings(g, lat, lon):
@@ -333,6 +426,8 @@ def main():
 
     if not args.dry_run:
         save_hp30(now)
+    if now <= route.end:
+        shock_check(now, args.dry_run, test=now < route.start - timedelta(hours=6))
     if now < route.start - timedelta(hours=6):
         test_season(now, route, args.dry_run)
         return
