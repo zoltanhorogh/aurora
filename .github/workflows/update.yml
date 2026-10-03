@@ -4,13 +4,16 @@ on:
   schedule:
     - cron: "17 */3 * * *"   # every 3 hours
     - cron: "47 * 10-24 10 *"   # plus hourly during the cruise (10–24 Oct): fresh MET clouds for tonight
-  workflow_dispatch:
+  workflow_dispatch:   # also started by the alert robot's watchdog and by an external timer (README)
 
 permissions:
   contents: write
+  actions: write       # the watchdog starts the alert robot
 
+# Own queue: in one shared queue a waiting forecast run was cancelled by the next waiting alert run. The two
+# workflows write different files, so their commits rebase cleanly.
 concurrency:
-  group: data-writer
+  group: update-forecast
   cancel-in-progress: false
 
 jobs:
@@ -44,4 +47,16 @@ jobs:
           git add data/notify_state.json 2>/dev/null || true
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "Forecast update $(date -u +'%Y-%m-%d %H:%M') UTC"
-          for i in 1 2 3; do git pull --rebase -X theirs && git push && break; sleep 5; done
+          for i in 1 2 3 4 5; do git pull --rebase -X theirs && git push && break; sleep $((RANDOM % 10 + 5)); done
+      - name: Watchdog (start the alert robot if GitHub's schedule left it out)
+        if: always()
+        # GitHub's free schedule is best effort: on 3 Oct 2026 the alert robot did not run 13:17-15:34 and
+        # 16:45-20:40. A run of either workflow starts the other one when it is overdue.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          age=$(python -c "import json,datetime as d; u=json.load(open('data/mag.json'))['updated']; print(int((d.datetime.now(d.timezone.utc)-d.datetime.fromisoformat(u.replace('Z','+00:00'))).total_seconds()//60))" 2>/dev/null || echo 9999)
+          busy=$(gh run list --workflow alert.yml --limit 5 --json status -q '[.[] | select(.status != "completed")] | length')
+          echo "alert robot last logged $age min ago, $busy run(s) waiting or running"
+          if [ "$age" -gt 45 ] && [ "$busy" = "0" ]; then gh workflow run alert.yml --ref main -f test=false && echo "started the alert robot"; fi

@@ -12,9 +12,11 @@ on:
 
 permissions:
   contents: write
+  actions: write       # the watchdog starts the forecast
 
+# Own queue (see update.yml); a newer waiting alert run replaces an older waiting one, which is fine.
 concurrency:
-  group: data-writer
+  group: aurora-alerts
   cancel-in-progress: false
 
 jobs:
@@ -49,4 +51,15 @@ jobs:
           for f in data/alert_state.json data/hp30.json data/sky_obs.json data/mag.json data/shock.json; do [ -f "$f" ] && git add "$f"; done
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "Alert state $(date -u +'%Y-%m-%d %H:%M') UTC"
-          for i in 1 2 3; do git pull --rebase -X theirs && git push && break; sleep 5; done
+          for i in 1 2 3 4 5; do git pull --rebase -X theirs && git push && break; sleep $((RANDOM % 10 + 5)); done
+      - name: Watchdog (start the forecast if GitHub's schedule left it out)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # overdue: 2 h during the cruise (hourly runs), 4 h before it (3-hourly runs)
+          read due age < <(python -c "import json,datetime as d; now=d.datetime.now(d.timezone.utc); g=d.datetime.fromisoformat(json.load(open('data/latest.json'))['generated'].replace('Z','+00:00')); m=int((now-g).total_seconds()//60); lim=120 if now.month==10 and 10<=now.day<=24 else 240; print('yes' if m>lim else 'no', m)" 2>/dev/null || echo "no ?")
+          busy=$(gh run list --workflow update.yml --limit 5 --json status -q '[.[] | select(.status != "completed")] | length')
+          echo "forecast is $age min old, $busy run(s) waiting or running"
+          if [ "$due" = "yes" ] && [ "$busy" = "0" ]; then gh workflow run update.yml --ref main && echo "started the forecast"; fi

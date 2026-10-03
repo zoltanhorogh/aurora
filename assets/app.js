@@ -2583,6 +2583,15 @@
     scrollToFind(() => $('#last-night'));
   }
 
+  // The alert robot logs the magnetometers at every run (mag.json): an old file means GitHub has not started it
+  // for a while (3 Oct 2026: 13:17-15:34 and 16:45-20:40), so alerts can come late. The watchdogs and the external
+  // timer restart it; until then the page says so.
+  function robotLate() {
+    const u = MAG && MAG.updated ? new Date(MAG.updated).getTime() : null;
+    if (!u || Date.now() - u < 60 * 60e3) return '';
+    return `<div class="blate">⚠️ The alert robot last ran at ${hm(u)}: alerts may come late (GitHub's timer is behind). It restarts by itself; to start it now: GitHub › Actions › Aurora alerts › Run workflow (untick "test").</div>`;
+  }
+
   function renderBasic() {
     const el = $('#basic');
     if (!el || !D) return;
@@ -2624,7 +2633,7 @@
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
-      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
+      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>${robotLate()}
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>

@@ -22,6 +22,11 @@ Live at **https://zoltanhorogh.github.io/aurora/**
 - `scripts/alert.py` runs (scheduled every 10 minutes; GitHub starts it every 15–30 in practice) after `sky_log.py` (all-sky camera AI, the most auroral picture of each
   hour) and `mag_log.py` (FMI magnetometers). Before the cruise it sends test alerts; on board an evening outlook
   and "go outside" alerts through [ntfy](https://ntfy.sh) (topic in the `NTFY_TOPIC` repository secret).
+- GitHub's free schedule is best effort (on 3 Oct 2026 the alert robot missed 13:17–15:34 and 16:45–20:40). Three
+  layers keep it running: the schedules themselves; a watchdog step in each workflow that starts the other one when
+  it is overdue (alert robot > 45 min, forecast > 4 h, 2 h during the cruise); and an external timer that calls
+  `POST /repos/zoltanhorogh/aurora/actions/workflows/{alert,update}.yml/dispatches` with a fine-grained token that
+  can only run this repository's workflows. The page warns when the alert robot is more than an hour late.
   Measured activity is Hp30 (GFZ Potsdam), never NOAA's 1-minute Kp.
 - `scripts/notify.py`: morning digest and change alerts, only about nights that are not over.
 - `scripts/weather.py`: port, hike and sea forecasts, MET Norway warnings, and the hourly weather where you are.
