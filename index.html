@@ -24,7 +24,7 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="assets/style.css?v=76">
+<link rel="stylesheet" href="assets/style.css?v=77">
 </head>
 <body>
 <div class="aurora-glow"></div>
@@ -180,7 +180,7 @@
           <li><b>Density and Bt</b> – how many particles the solar wind carries (per cm³, calm 2–10) and how strong its magnetic field is (in nanotesla, nT; calm ~5, storms 10–30+). Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. A sudden jump of speed, density and Bt together = a CME's front arriving (☄️ alert).</li>
           <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot.</li>
           <li><b>27-day recurrence</b> – the Sun turns every ~27 days, so what happened 27 days before a night often repeats.</li>
-          <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp.</li>
+          <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp. Followed in two steps: the model gives a rough arrival days ahead (often hours off, sometimes a miss); when its front reaches the solar wind satellite, the robot sees the jump and sends a ☄️ alert 40–85 minutes before it reaches us.</li>
           <li><b>G1–G5</b> – NOAA's storm scale: G1 minor (Kp 5, from 4.7), G2 moderate (6), G3 strong (7), G4 severe (8), G5 extreme (9). A storm matters most further south: up north even quiet activity is enough.</li>
         </ul>
       </div>
@@ -217,6 +217,7 @@
         </ol>
         <p><b>Already now:</b> a <b>morning outlook</b> every day around 08:15 (Hungarian/ship time) with the change since the day before, and a <b>change alert</b> whenever an Arctic night (13–18 Oct) moves 5+ points, or a solar eruption is heading our way (max 2 a day).</p>
         <p><b>During the cruise</b> you also get an <b>evening outlook</b> around 17:00 ship time, and a <b>"go outside"</b> alert when live activity is good, or a nearby magnetometer shows a substorm (Tromsø and Alta area: the fastest sign), the sky over the ship is clear (MET Norway) and it is dark. At most one alert per 90 minutes (30 minutes for a new substorm), sooner when it gets stronger; under clouds a "look for gaps" message instead. Tapping a notification opens that night on this page.</p>
+        <p>A <b>☄️ CME alert</b> when a solar eruption's front reaches the solar wind satellite (once per arrival, day or night; before the cruise as a test).</p>
       </div>
     </div>
   </section>
@@ -228,6 +229,6 @@
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="assets/app.js?v=76"></script>
+<script src="assets/app.js?v=77"></script>
 </body>
 </html>
