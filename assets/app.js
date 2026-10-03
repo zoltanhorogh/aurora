@@ -314,6 +314,30 @@
     return !again;
   }
 
+  // Slide a finger along a strip of hours or bars, as on the charts: the cell under the finger is selected and
+  // explained (select); a plain tap on the selected cell still clears it (tapSelect). Vertical scrolling stays.
+  function slideStrip(cells, select) {
+    const list = [...cells];
+    if (!list.length) return;
+    const strip = list[0].parentElement;
+    let down = false, moved = false;
+    strip.addEventListener('pointerdown', (ev) => { if (ev.pointerType !== 'mouse') { down = true; moved = false; } });
+    strip.addEventListener('pointermove', (ev) => {
+      if (!down) return;
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const c = el && list.find((x) => x === el || x.contains(el));
+      if (!c || c.classList.contains('sel')) return;
+      moved = true;
+      list.forEach((x) => x.classList.toggle('sel', x === c));
+      select(c);
+    });
+    const up = () => { down = false; };
+    strip.addEventListener('pointerup', up);
+    strip.addEventListener('pointercancel', up);
+    // the click that ends a slide must not clear the hour it ended on
+    list.forEach((c) => c.addEventListener('click', (ev) => { if (moved) { moved = false; ev.stopImmediatePropagation(); } }, true));
+  }
+
   // opts.above: the box sits above the chart, so the finger can slide along the hours without covering them
   function bindHover(container, W, bands, htmlFor, onBand, opts = {}) {
     const svg = container.querySelector('svg');
@@ -365,7 +389,8 @@
   const gridY = (y, x0, x1, vals, fmt) => vals.map((v, i) =>
     `<line x1="${x0}" x2="${x1}" y1="${y(v)}" y2="${y(v)}" stroke="${i === 0 ? '#383835' : '#2c2c2a'}"/>` +
     `<text x="${x0 - 6}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`).join('');
-  const hlBand = (hl, bands, i, top, h) => { hl.innerHTML = i < 0 ? '' : `<rect x="${bands[i][0]}" y="${top}" width="${bands[i][1] - bands[i][0]}" height="${h}" fill="rgba(255,255,255,0.07)"/>`; };
+  // the selected hour: a green frame, so it stands out from the grey twilight bands (user, 3 Oct 2026)
+  const hlBand = (hl, bands, i, top, h) => { hl.innerHTML = i < 0 ? '' : `<rect x="${bands[i][0] + 0.75}" y="${top + 0.75}" width="${bands[i][1] - bands[i][0] - 1.5}" height="${h - 1.5}" rx="3" fill="rgba(62,224,143,0.14)" stroke="#3ee08f" stroke-width="1.5"/>`; };
 
   // ------------------------------------------------------------ night detail (hourly chart + GO/TRY/NO table)
   // Hourly verdicts exist only where MET Norway (2.5 km) covers the hour, and then clouds come from
@@ -1072,6 +1097,7 @@
         const on = tapSelect(hpCells, c, () => hpWhy(+c.dataset.t, byT.get(+c.dataset.t), need0), $('#hp-why'), '👆 Tap a bar to see that half hour');
         hpSel = on ? +c.dataset.t : null;
       }));
+      slideStrip(hpCells, (c) => { $('#hp-why').innerHTML = hpWhy(+c.dataset.t, byT.get(+c.dataset.t), need0); hpSel = +c.dataset.t; });
       return;
     }
     const need = liveNeed();
@@ -2207,7 +2233,7 @@
       <div class="blegend"><span><b class="cv"></b>how often aurora is seen at that hour on clear nights (Kiruna, 10 years)</span></div>` : ''}
       <div class="blegend bsky"><span>Icons = clouds only:</span>${[[20, 'clear ≤40%'], [55, 'broken ≤70%'], [90, 'overcast']].map(([c, t]) =>
         `<span><svg viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(c)}</svg>${t}</span>`).join('')}</div>
-      <div class="bwhy" id="b-why"><span class="btap">👆 Tap an hour to see why</span></div>`;
+      <div class="bwhy" id="b-why"><span class="btap">👆 Tap or slide along the hours to see why</span></div>`;
   }
 
   // Why an hour of the strip has its colour, in one line.
@@ -2671,6 +2697,7 @@
       const hrs = t.n.hourly.filter((h) => h.sun < -3);
       const cells = el.querySelectorAll('.bstrip > div');
       cells.forEach((c) => c.addEventListener('click', () => tapSelect(cells, c, () => basicWhy(hrs[+c.dataset.i], t.n), $('#b-why'), '👆 Tap an hour to see why')));
+      slideStrip(cells, (c) => { $('#b-why').innerHTML = basicWhy(hrs[+c.dataset.i], t.n); });
     }
     el.querySelectorAll('.bnc').forEach((b) => b.addEventListener('click', () => setMode('advanced', () => {
       selected = b.dataset.date;
@@ -2699,6 +2726,7 @@
     if (P && morning) {
       const cells = el.querySelectorAll('#b-last .pstrip > div');
       cells.forEach((c) => c.addEventListener('click', () => tapSelect(cells, c, () => P.why(+c.dataset.i), $('#b-lastwhy'), '👆 Tap an hour to see what happened')));
+      slideStrip(cells, (c) => { $('#b-lastwhy').innerHTML = P.why(+c.dataset.i); });
     }
   }
 

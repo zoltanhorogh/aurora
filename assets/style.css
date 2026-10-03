@@ -276,7 +276,7 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 
 /* ---------- charts ---------- */
 .chart { position: relative; width: 100%; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.chart svg { touch-action: pan-y; }
+.chart svg, .bstrip, .pstrip, .hpc { touch-action: pan-y; }
 .st { display: inline-block; min-width: 40px; text-align: center; font-weight: 700; font-size: 11px; letter-spacing: .06em; border-radius: 6px; padding: 1px 6px; border: 1px solid; }
 .st.go { color: var(--good); border-color: var(--good); background: rgba(12, 163, 12, 0.14); }
 .st.try { color: var(--warn); border-color: var(--warn); }
