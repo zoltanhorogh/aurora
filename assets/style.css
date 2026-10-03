@@ -103,7 +103,6 @@ table.storm td, table.storm th { text-align: left; white-space: normal; }
 .nt.tapgo > .b-k::after, .bf.tapgo > .h::after, .b-card.tapgo > .b-k::after { content: ' ›'; color: var(--aurora); font-weight: 700; }
 .bgo { color: var(--aurora); font-weight: 600; cursor: pointer; text-transform: none; letter-spacing: 0; margin-left: 6px; }
 .binland { margin: 2px 0 8px; font-size: 13px; }
-.blate { font-size: 12px; color: #f5d36b; background: rgba(242,194,48,.08); border: 1px solid rgba(242,194,48,.45); border-radius: 10px; padding: 6px 10px; margin: 6px 0 2px; }
 /* things you tap or drag a finger across: no text selection and no long-press menu (as on the charts) */
 .hpc, .magspark, .bstrip, .pstrip, .vstrip, .vaxis, .tapgo, .bnc, .night, .bf, .nt, tr.pick, .daytabs, #mode, .bstorm, .binland > summary {
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }

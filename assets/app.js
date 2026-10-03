@@ -314,7 +314,8 @@
     return !again;
   }
 
-  function bindHover(container, W, bands, htmlFor, onBand) {
+  // opts.above: the box sits above the chart, so the finger can slide along the hours without covering them
+  function bindHover(container, W, bands, htmlFor, onBand, opts = {}) {
     const svg = container.querySelector('svg');
     const tip = tipBox(container);
     let cur = -1; // band whose tooltip is showing
@@ -332,6 +333,11 @@
       tip.style.display = 'block';
       const cw = container.clientWidth, tw = tip.offsetWidth;
       const cx = ((bands[i][0] + bands[i][1]) / 2 / W) * cw;
+      if (opts.above) {
+        tip.style.left = Math.max(0, Math.min(cw - tw, cx - tw / 2)) + 'px';
+        tip.style.top = `${-tip.offsetHeight - 8}px`;
+        return;
+      }
       let left = cx + 12;
       if (left + tw > cw) left = cx - tw - 12;
       tip.style.left = Math.max(0, left) + 'px';
@@ -818,7 +824,7 @@
         <div class="row"><span>Activity chance</span><span>${pct(h.p_act)}</span></div>
         <div class="row"><span>Moon</span><span>${h.moon_alt > 0 ? Math.round(h.moon_illum * 100) + '% lit, up' : 'below horizon'}</span></div>
         <div class="hint" style="margin-top:4px">${h.kp >= h.kp_req ? 'Forecast activity is above what this spot needs.' : `Forecast is ${(h.kp_req - h.kp).toFixed(1)} short of what this spot needs; the chance comes from forecast uncertainty.`} Kp source: ${esc(h.kp_src)}</div>`;
-    }, (i) => hlBand(hl, bands, i, mt, ph));
+    }, (i) => hlBand(hl, bands, i, mt, ph), { above: true });
   }
 
   // ------------------------------------------------------------ trend chart
@@ -2583,15 +2589,6 @@
     scrollToFind(() => $('#last-night'));
   }
 
-  // The alert robot logs the magnetometers at every run (mag.json): an old file means GitHub has not started it
-  // for a while (3 Oct 2026: 13:17-15:34 and 16:45-20:40), so alerts can come late. The watchdogs and the external
-  // timer restart it; until then the page says so.
-  function robotLate() {
-    const u = MAG && MAG.updated ? new Date(MAG.updated).getTime() : null;
-    if (!u || Date.now() - u < 60 * 60e3) return '';
-    return `<div class="blate">⚠️ The alert robot last ran at ${hm(u)}: alerts may come late (GitHub's timer is behind). It restarts by itself; to start it now: GitHub › Actions › Aurora alerts › Run workflow (untick "test").</div>`;
-  }
-
   function renderBasic() {
     const el = $('#basic');
     if (!el || !D) return;
@@ -2633,7 +2630,7 @@
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
-      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>${robotLate()}
+      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>

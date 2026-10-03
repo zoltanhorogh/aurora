@@ -26,7 +26,7 @@ Live at **https://zoltanhorogh.github.io/aurora/**
   layers keep it running: the schedules themselves; a watchdog step in each workflow that starts the other one when
   it is overdue (alert robot > 45 min, forecast > 4 h, 2 h during the cruise); and an external timer that calls
   `POST /repos/zoltanhorogh/aurora/actions/workflows/{alert,update}.yml/dispatches` with a fine-grained token that
-  can only run this repository's workflows. The page warns when the alert robot is more than an hour late.
+  can only run this repository's workflows.
   Measured activity is Hp30 (GFZ Potsdam), never NOAA's 1-minute Kp.
 - `scripts/notify.py`: morning digest and change alerts, only about nights that are not over.
 - `scripts/weather.py`: port, hike and sea forecasts, MET Norway warnings, and the hourly weather where you are.
