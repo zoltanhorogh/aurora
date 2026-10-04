@@ -1241,11 +1241,14 @@
     const [lat, lon, label] = herePos();
     Promise.all([getOvation(), getHpi().catch(() => null)]).then(([o, hpi]) => {
       const { local, north } = ovationAt(o, lat, lon);
-      const power = hpi ? `<div class="why">Hemispheric power <b>${hpi.gw} GW${hpi.trend}</b>: ${hpiWord(hpi.gw)} · calm under 20 · active 20–50 · storm 50+ · big storm 100+</div>` : '';
-      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north${power}`);
+      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+      // its own tile with a big number (as a small line under "Aurora overhead" it was easy to miss; user, 4 Oct)
+      if (hpi) setTile('lt-hpi', `${hpi.gw}<small> GW</small> <span class="magarrow">${hpi.trend.trim()}</span> <span class="magword">${hpiWord(hpi.gw)}</span>`,
+        'all aurora over the northern hemisphere · calm under 20 · active 20–50 · storm 50+ · big storm 100+');
+      else setTile('lt-hpi', '–', 'not available right now');
       LIVE.ov = local;
       basicRefresh();
-    }).catch(() => setTile('lt-ov', '–', 'offline'));
+    }).catch(() => { setTile('lt-ov', '–', 'offline'); setTile('lt-hpi', '–', 'offline'); });
     drawOvationMap();
     renderRouteOvation();
   }
@@ -1285,7 +1288,8 @@
         : s.phase === 'over' ? '<div class="tile ship"><div class="k">Reference</div><div class="v">Tromsø</div><div class="s">the cruise is over; the live numbers are for Tromsø</div></div>'
         : '<div class="tile ship"><div class="k">Practice spot</div><div class="v">Tromsø</div><div class="s">until the cruise starts, all live numbers are for Tromsø</div></div>') +
       t('Activity now (Hp30)', '…', '', 'lt-hp').replace('class="tile"', 'class="tile wide"') + t('Magnetometer', '…', '', 'lt-mag') +
-      t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov');
+      t('Bz', '…', '', 'lt-bz') + t('Solar wind', '…', '', 'lt-sw') + t('Aurora overhead', '…', 'NOAA OVATION', 'lt-ov') +
+      t('Hemispheric power', '…', 'NOAA OVATION', 'lt-hpi');
     refreshNoaaTiles();
     updateHp30Tile();
     updateMagTile();
