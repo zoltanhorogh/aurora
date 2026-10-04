@@ -11,7 +11,8 @@ During the cruise it sends:
     Hp30 shows it: Masi -102 nT in 10 min at 22:49 on 1 Oct 2026, aurora seen along the coast right after).
 Under clouds a quieter "look for gaps" message instead.
 Before and during the cruise, day or night: a "☄️ CME arrived" message when the solar wind at the L1 satellite
-jumps (a CME's shock front), 40-85 minutes before it reaches Earth (1.5 million km at its speed); data/shock.json keeps it for the page.
+jumps (a CME's shock front), 40-85 minutes before it reaches Earth (1.5 million km at its speed);
+in the dark a "🚪 door open" message when the solar wind's field is strong and turns south (a stream front); data/shock.json keeps it for the page.
 
 Usage:
   python alert.py            normal run (needs NTFY_TOPIC env var)
@@ -54,6 +55,11 @@ SHOCK_DV = 20            # km/s: solar wind speed jump (median of 10 min after v
 SHOCK_N = 1.8            # density ratio after/before
 SHOCK_B = 1.3            # Bt ratio after/before
 SHOCK_LOOK_MIN = 90      # minutes of 1-minute data searched each run (runs are 15-30 min apart)
+DOOR_BT = 10             # nT: 15-minute mean field strength at L1 ...
+DOOR_BZ = -5             # nT: ... and 15-minute mean Bz south of this = the door is open
+DOOR_MIN = 15
+DOOR_REARM_MIN = 60      # closed this long before a new opening counts
+DOOR_COOLDOWN_MIN = 180  # at most one door alert per 3 hours
 
 _RTSW = {}  # NOAA's real-time solar wind files, fetched once per run
 
@@ -148,6 +154,61 @@ def wind_jumps(rows):
 def travel_min(v):
     """Minutes the solar wind needs from L1 (1.5 million km) to Earth at v km/s, to 5 minutes (300 km/s: 85)."""
     return max(5, round(1.5e6 / max(v, 200) / 60 / 5) * 5)
+
+
+def door_events(rows):
+    """Moments the door opens: rows [(t, bt, bz)] of 1-minute L1 field data; the 15-minute means reach Bt >= 10 nT and
+    Bz <= -5 nT after the door was closed for an hour. Night of 3-4 Oct 2026 (the CH 98 stream front, Bt 6 -> 20 nT):
+    one opening, 01:05 UTC (Bt 15, Bz -5); the substorm followed at 02:31 UTC (Masi -87 nT, Hp30 4.0)."""
+    out, is_open, closed = [], False, None
+    for t, _, _ in rows:
+        w = [r for r in rows if t - timedelta(minutes=DOOR_MIN) < r[0] <= t]
+        if len(w) < DOOR_MIN * 0.7:
+            continue
+        bt, bz = sum(r[1] for r in w) / len(w), sum(r[2] for r in w) / len(w)
+        if bt >= DOOR_BT and bz <= DOOR_BZ:
+            if not is_open and (closed is None or t - closed >= timedelta(minutes=DOOR_REARM_MIN)):
+                out.append({"at": iso(t), "bt": round(bt, 1), "bz": round(bz, 1)})
+            is_open = True
+        elif is_open:
+            is_open, closed = False, t
+    return out
+
+
+def door_message(e, test=False):
+    when = (parse_utc(e["at"]) + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%H:%M")
+    title = ("🧪 TEST · " if test else "") + "🚪 Door open: aurora likely within the hour"
+    msg = (f"{when} ship time: the solar wind's magnetic field is strong (Bt {e['bt']:.0f} nT) and has turned south "
+           f"(Bz {e['bz']:+.0f} nT for 15+ min). This is what feeds the aurora: it usually brightens within the hour, often "
+           f"with a substorm. Look north if the sky is clear; watch Live.")
+    return title, msg
+
+
+def door_check(now, dry, test, lat, lon):
+    """Once per opening (at most every 3 hours), only in the dark at `lat, lon` (Tromsø before the cruise, the ship
+    on board): in daylight nothing is sent and the opening still counts later if the door stays open."""
+    if sun_alt(now, lat, lon) > -6:
+        return
+    try:
+        rows = sorted((parse_utc(r["time_tag"] + "Z"), r["bt"], r["bz_gsm"]) for r in rtsw("mag")
+                      if r.get("active") and r.get("bt") is not None and r.get("bz_gsm") is not None)
+    except Exception as e:  # the other alerts must still run
+        print("door check failed:", e)
+        return
+    rows = [r for r in rows if r[0] >= now - timedelta(minutes=90)]
+    if not rows or now - rows[-1][0] > timedelta(minutes=20):
+        return  # no fresh data
+    recent = [e for e in door_events(rows) if parse_utc(e["at"]) >= now - timedelta(minutes=40)]
+    state = load_json(DATA / "alert_state.json", {}) or {}
+    last = (state.get("door") or {}).get("at")
+    if not recent or (last and now - parse_utc(last) < timedelta(minutes=DOOR_COOLDOWN_MIN)):
+        return
+    e = recent[-1]
+    title, msg = door_message(e, test)
+    send(title, msg, priority=4, tags=["door"], dry=dry, click=DASHBOARD + "#live")
+    if not dry:
+        state["door"] = {"at": iso(now), "open": e["at"], "bt": e["bt"], "bz": e["bz"]}
+        save_json(DATA / "alert_state.json", state)
 
 
 def shock_message(e, test=False):
@@ -427,7 +488,10 @@ def main():
     if not args.dry_run:
         save_hp30(now)
     if now <= route.end:
-        shock_check(now, args.dry_run, test=now < route.start - timedelta(hours=6))
+        test = now < route.start - timedelta(hours=6)
+        shock_check(now, args.dry_run, test=test)
+        here = (69.65, 18.96) if test else (pos["lat"], pos["lon"])  # Tromsø while practising, then the ship
+        door_check(now, args.dry_run, test, *here)
     if now < route.start - timedelta(hours=6):
         test_season(now, route, args.dry_run)
         return

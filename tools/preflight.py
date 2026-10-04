@@ -462,6 +462,22 @@ def check_wind_jump(problems):
         lint_messages(f'"message": "{title} {msg}",\n', "CME arrival alert", problems)
 
 
+def check_door(problems):
+    """The CH 98 stream front of 3-4 Oct 2026 (tools/fixtures, NOAA 1-minute L1 field 21-05 UTC): the door opens once, 01:05."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import alert  # noqa: E402
+    from common import parse_utc  # noqa: E402
+    rows = json.loads((ROOT / "tools" / "fixtures" / "rtsw_mag_2026-10-04.json").read_text(encoding="utf-8"))["rows"]
+    ev = alert.door_events([(parse_utc(r["t"] + ":00Z"), r["bt"], r["bz"]) for r in rows])
+    ok = len(ev) == 1 and "2026-10-04T01:00" <= ev[0]["at"] <= "2026-10-04T01:10"
+    print(f"  {'ok ' if ok else 'FAIL'} door open (strong field turned south) found once, 4 Oct 01:05 UTC")
+    if not ok:
+        problems.append(f"door check: expected one opening at ~01:05 UTC on 4 Oct, got {ev}")
+    if ev:
+        title, msg = alert.door_message(ev[0])
+        lint_messages(f'"message": "{title} {msg}",\n', "door open alert", problems)
+
+
 def check_notify_flipflop(tmp, base_env, problems):
     """A night moving 4 points across a rating line (24% <-> 29% on 2 Oct 2026) is no change alert."""
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -751,6 +767,7 @@ def main():
             check_mag_alert(tmp, base_env, problems)
             check_notify_flipflop(tmp, base_env, problems)
             check_wind_jump(problems)
+            check_door(problems)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [

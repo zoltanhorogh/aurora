@@ -1280,7 +1280,7 @@
 
     // Everything loads automatically (the ship has fast Starlink-based Wi-Fi); ~2.5 MB per page view.
     $('#bz-panel').innerHTML = `<h3>Solar wind, last 24 h</h3>
-      <p class="hint">Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. <b>Bz</b> negative (south) lets the energy in: 20+ minutes below −5 nT often triggers aurora within the hour. A CME's front = a sudden step up of field, speed and density together (☄️ line). <a href="https://www.swpc.noaa.gov/products/real-time-solar-wind" target="_blank" rel="noopener">NOAA's own solar wind plot ↗</a></p>
+      <p class="hint">Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. <b>Bz</b> negative (south) lets the energy in: 20+ minutes below −5 nT often triggers aurora within the hour. A CME's front = a sudden step up of field, speed and density together (☄️ line). Bright green = <b>door open</b>: a strong field (Bt 10+ nT) turned south (Bz −5 or less); the robot sends a 🚪 alert in the dark. <a href="https://www.swpc.noaa.gov/products/real-time-solar-wind" target="_blank" rel="noopener">NOAA's own solar wind plot ↗</a></p>
       <button class="btn" id="bz-btn">Loading…</button><div class="chart" id="bz-chart"></div>`;
     $('#bz-btn').addEventListener('click', loadBz);
     loadBz();
@@ -1691,13 +1691,20 @@
     const line = (y1, k) => `<line x1="${ml}" x2="${ml + pw}" y1="${y1}" y2="${y1}" stroke="${k ? '#555' : '#2c2c2a'}"/>`;
     let g = `<rect x="${ml}" y="${yB(-5)}" width="${pw}" height="${yB(-lim) - yB(-5)}" fill="rgba(12,163,12,0.08)"/>`;
     for (let v = -lim; v <= lim; v += 5) g += line(yB(v), v === 0) + `<text x="${ml - 6}" y="${yB(v) + 4}" text-anchor="end">${v}</text>`;
-    g += `<text x="${ml + 4}" y="${mt + 12}" class="lbl">Bt (white) · Bz (blue), nT · green: below −5, good for aurora</text>`;
+    g += `<text x="${ml + 4}" y="${mt + 12}" class="lbl">Bt (white) · Bz (blue), nT · bright green: door open (Bt 10+, Bz −5 or less)</text>`;
     for (let v = 300; v <= vMax; v += 100) g += line(yV(v), false) + `<text x="${ml - 6}" y="${yV(v) + 4}" text-anchor="end">${v}</text>`;
     g += `<text x="${ml + 4}" y="${top2 - 6}" class="lbl">Speed, km/s · 450+ as in storms</text>`;
     for (const n of [0.1, 1, 10, 100]) g += line(yN(n), false) + `<text x="${ml - 6}" y="${yN(n) + 4}" text-anchor="end">${n}</text>`;
     g += `<text x="${ml + 4}" y="${top3 - 6}" class="lbl">Density, particles per cm³ (calm 2–10)</text>`;
     const stepH = pw < 450 ? 6 : 3;
     for (let t = Math.ceil(t0 / (stepH * 3600e3)) * stepH * 3600e3; t <= t1; t += stepH * 3600e3) g += `<text x="${x(t)}" y="${H - 8}" text-anchor="middle">${hm(t)}</text>`;
+    // door open (the robot's 🚪 alert rule, on 10-minute means here): strong field (Bt 10+) turned south (Bz -5 or less)
+    for (let i = 0; i < pts.length; i++) {
+      const q = pts[i];
+      if (!(q.bt >= 10 && q.bz <= -5)) continue;
+      const a = x(q.t), b = i + 1 < pts.length ? x(pts[i + 1].t) : x(q.t) + 4;
+      g += `<rect x="${a}" y="${mt}" width="${Math.max(2, b - a)}" height="${hB}" fill="rgba(62,224,143,0.22)"/>`;
+    }
     for (const e of (SHOCK && SHOCK.events) || []) {
       const t = new Date(e.at).getTime();
       if (t < t0 || t > t1) continue;
