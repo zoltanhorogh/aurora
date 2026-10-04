@@ -24,7 +24,7 @@
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="assets/style.css?v=83">
+<link rel="stylesheet" href="assets/style.css?v=84">
 </head>
 <body>
 <div class="aurora-glow"></div>
@@ -178,7 +178,7 @@
           <li><b>Bz</b> – direction of the solar wind's magnetic field. <b>Negative (south) for 20+ minutes = the door is open</b>; the stronger and longer, the better. When a strong field (Bt 10+ nT) turns south (Bz −5 or less for 15 minutes), the robot sends a 🚪 <b>door open</b> alert in the dark: aurora usually brightens within the hour.</li>
           <li><b>Solar wind speed</b> – above ~500 km/s helps.</li>
           <li><b>Density and Bt</b> – how many particles the solar wind carries (per cm³, calm 2–10) and how strong its magnetic field is (in nanotesla, nT; calm ~5, storms 10–30+). Measured 1.5 million km towards the Sun (L1), 40–85 minutes before it reaches us. A sudden jump of speed, density and Bt together = a CME's front arriving (☄️ alert).</li>
-          <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot.</li>
+          <li><b>OVATION</b> – NOAA's 30–90 minute aurora model: the probability of aurora overhead at a given spot. Its <b>hemispheric power</b> (GW) is the total aurora energy over the northern hemisphere: calm under 20, active 20–50, storm 50+, big storm 100+.</li>
           <li><b>27-day recurrence</b> – the Sun turns every ~27 days, so what happened 27 days before a night often repeats.</li>
           <li><b>CME</b> – a solar eruption; if one is heading to Earth, NASA's model gives an arrival time and expected Kp. Followed in two steps: the model gives a rough arrival days ahead (often hours off, sometimes a miss); when its front reaches the solar wind satellite, the robot sees the jump and sends a ☄️ alert 40–85 minutes before it reaches us.</li>
           <li><b>G1–G5</b> – NOAA's storm scale: G1 minor (Kp 5, from 4.7), G2 moderate (6), G3 strong (7), G4 severe (8), G5 extreme (9). A storm matters most further south: up north even quiet activity is enough.</li>
@@ -229,6 +229,6 @@
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="assets/app.js?v=83"></script>
+<script src="assets/app.js?v=84"></script>
 </body>
 </html>

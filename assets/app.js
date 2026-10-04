@@ -1226,11 +1226,23 @@
     basicRefresh();
   }
 
+  // NOAA's hemispheric power: the OVATION model's total aurora energy over the northern hemisphere (GW, every 5 min),
+  // with the scale the user asked for (4 Oct 2026). The file holds today's values; the last line is the newest.
+  const hpiWord = (gw) => (gw < 20 ? 'calm' : gw < 50 ? 'active' : gw < 100 ? 'storm' : 'big storm');
+  async function getHpi() {
+    const txt = await fetch(`${SWPC}/text/aurora-nowcast-hemi-power.txt?t=${Date.now()}`).then((r) => (r.ok ? r.text() : ''));
+    const rows = txt.split('\n').filter((l) => /^\d{4}-\d\d-\d\d_/.test(l)).map((l) => l.trim().split(/\s+/));
+    if (!rows.length) return null;
+    const gw = +rows[rows.length - 1][2], hourAgo = rows.length > 12 ? +rows[rows.length - 13][2] : null;
+    return { gw, trend: hourAgo == null ? '' : gw >= hourAgo + 5 ? ' ↑' : gw <= hourAgo - 5 ? ' ↓' : ' →' };
+  }
+
   function refreshOvation() {
     const [lat, lon, label] = herePos();
-    getOvation().then((o) => {
+    Promise.all([getOvation(), getHpi().catch(() => null)]).then(([o, hpi]) => {
       const { local, north } = ovationAt(o, lat, lon);
-      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+      const power = hpi ? `<div class="why">Hemispheric power <b>${hpi.gw} GW${hpi.trend}</b>: ${hpiWord(hpi.gw)} · calm under 20 · active 20–50 · storm 50+ · big storm 100+</div>` : '';
+      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north${power}`);
       LIVE.ov = local;
       basicRefresh();
     }).catch(() => setTile('lt-ov', '–', 'offline'));
