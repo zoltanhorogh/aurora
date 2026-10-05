@@ -50,6 +50,7 @@
   let HP30 = null;   // freshest Hp30 series: data/hp30.json (every 30 min on board) or latest.json
   let MAG = null;    // mag.json (FMI magnetometer swing, several times an hour, day and night)
   let SHOCK = null;  // shock.json (jumps of the solar wind at the L1 satellite: a CME arriving)
+  let ALERTS = null; // alert_state.json (when the robot's alerts went out)
   let selected = null;
   let bzPts = null;  // loaded on demand
 
@@ -1215,8 +1216,9 @@
 
   // Files the robot writes: Hp30 and the magnetometer swing.
   async function refreshRobotFiles() {
-    const [hp, mag, shock] = await Promise.all([getJSON('data/hp30.json').catch(() => null), getJSON('data/mag.json').catch(() => null),
-      getJSON('data/shock.json').catch(() => null)]);
+    const [hp, mag, shock, alerts] = await Promise.all([getJSON('data/hp30.json').catch(() => null), getJSON('data/mag.json').catch(() => null),
+      getJSON('data/shock.json').catch(() => null), getJSON('data/alert_state.json').catch(() => null)]);
+    if (alerts) ALERTS = alerts;
     if (shock) { SHOCK = shock; safe(renderStorm); }
     HP30 = newerHp30(HP30, hp && hp.series);
     if (mag) MAG = mag;
@@ -2684,6 +2686,27 @@
     scrollToFind(() => $('#last-night'));
   }
 
+  // Live line on top of the Tonight card: the robot's alerts of the last 90 minutes (in the dark), so the card does
+  // not seem to contradict a "go outside" message on the phone while its forecast strip is grey. The strip is about
+  // the clouds; Right now has the live state.
+  function liveLine() {
+    const [lat, lon] = herePos();
+    if (sunAltAt(new Date(), lat, lon) > -6) return '';
+    const a = ALERTS || {};
+    const ev = [];
+    const add = (t, txt) => { if (t && Date.now() - new Date(t) < 90 * 60e3) ev.push([new Date(t).getTime(), txt]); };
+    add(a.last_alert, a.last_level === 'strong' ? '🔥 strong aurora: go outside' : '🟢 aurora likely: go outside');
+    add(a.cloudy && a.cloudy.at, '☁️ active under cloud: look for gaps');
+    add(a.door && a.door.at, '🚪 door open');
+    add(a.test && a.test.last_alert, a.test && a.test.last_level === 'strong' ? '🧪 test alert: strong activity' : '🧪 test alert: aurora active');
+    const sh = recentShock(1.5);
+    if (sh) add(sh.at, '☄️ CME arrived');
+    if (!ev.length) return '';
+    ev.sort((x, y) => y[0] - x[0]);
+    const items = ev.slice(0, 2).map(([t, txt]) => `${hm(t)} ${txt}`).join(' · ');
+    return `<div class="blive" id="b-live" role="button" tabindex="0">🔴 <b>Live</b> · ${items}. The forecast below is about the clouds: look for gaps. <span class="btap">Right now ›</span></div>`;
+  }
+
   function renderBasic() {
     const el = $('#basic');
     if (!el || !D) return;
@@ -2696,6 +2719,7 @@
       const v = basicVerdict(t.n);
       tonight = `<div class="b-card">
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
+        ${liveLine()}
         <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
         <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
         ${stormBasic(t.n)}
@@ -2725,7 +2749,7 @@
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
-      ${s.phase === 'over' ? '' : `<div class="b-card"><div class="b-k">Right now · ${hm(Date.now())}</div>
+      ${s.phase === 'over' ? '' : `<div class="b-card" id="b-now"><div class="b-k">Right now · ${hm(Date.now())}</div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
@@ -2776,6 +2800,8 @@
       scrollToY(yOf($('#night-detail')));
     })));
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
+    const bl = $('#b-live');
+    if (bl) bl.addEventListener('click', () => scrollToY(yOf($('#b-now'))));
     const bs = $('#b-storm');
     if (bs) bs.addEventListener('click', () => setMode('advanced', () => scrollToY(yOf($('#storm')))));
     const GO = {
@@ -2809,7 +2835,7 @@
       [D, HIST, VER, hpFile, WX, SKY, MAG] = await Promise.all([getJSON('data/latest.json'), getJSON('data/history.json').catch(() => null),
         getJSON('data/verification.json').catch(() => null), getJSON('data/hp30.json').catch(() => null),
         getJSON('data/weather.json').catch(() => null), getJSON('data/sky_obs.json').catch(() => null), getJSON('data/mag.json').catch(() => null)]);
-      SHOCK = await getJSON('data/shock.json').catch(() => null);
+      [SHOCK, ALERTS] = await Promise.all([getJSON('data/shock.json').catch(() => null), getJSON('data/alert_state.json').catch(() => null)]);
       if (D.trip && D.trip.watch_nights) KEY_NIGHTS = D.trip.watch_nights;
       [LOG, LAST, TLOG] = await Promise.all([getJSON('data/cruise_log.json').catch(() => null), getJSON('data/last_night.json').catch(() => null),
         getJSON('data/tonight_log.json').catch(() => null)]);

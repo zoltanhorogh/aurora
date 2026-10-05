@@ -415,6 +415,9 @@ def send(title, message, priority=4, tags=None, dry=False, click=DASHBOARD):
         return
     if not payload["topic"]:
         raise SystemExit("NTFY_TOPIC is not set")
+    # the alert workflow then starts a forecast run, so the page's Tonight card is fresh when the message is opened
+    with open("alert_sent.txt", "a", encoding="utf-8") as f:
+        f.write(title + "\n")
     server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
     req = urllib.request.Request(server, data=json.dumps(payload).encode("utf-8"),
                                  headers={"Content-Type": "application/json", "User-Agent": UA})

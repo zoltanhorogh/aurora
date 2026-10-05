@@ -92,6 +92,8 @@ body.basic-mode main > section:not(#basic), body.basic-mode nav.tabs { display: 
 .bstorm { font-size: 13px; line-height: 1.45; color: #f5d36b; background: rgba(242,194,48,.08); border: 1px solid rgba(242,194,48,.45);
   border-radius: 10px; padding: 7px 10px; margin: 8px 0 4px; cursor: pointer; }
 .bstorm b { color: #f2c230; }
+.blive { font-size: 13px; line-height: 1.45; color: #ffb4a8; background: rgba(226,75,74,.10); border: 1px solid rgba(226,75,74,.55); border-radius: 10px; padding: 7px 10px; margin: 8px 0 4px; cursor: pointer; }
+.blive b { color: #ff7b6e; }
 .bstrong { font-size: 13px; line-height: 1.45; color: #8fe3b3; background: rgba(31,170,89,.10); border: 1px solid rgba(31,170,89,.45); border-radius: 10px; padding: 7px 10px; margin: 2px 0 8px; }
 #storm { margin-bottom: 14px; border-color: rgba(242,194,48,.45); }
 #storm h3 { margin-top: 0; color: #f2c230; }

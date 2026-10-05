@@ -43,6 +43,17 @@ jobs:
           else
             python scripts/alert.py
           fi
+      - name: Fresh forecast after an alert (the Tonight card then matches the message)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f alert_sent.txt ] || exit 0
+          age=$(python -c "import json,datetime as d; g=d.datetime.fromisoformat(json.load(open('data/latest.json'))['generated'].replace('Z','+00:00')); print(int((d.datetime.now(d.timezone.utc)-g).total_seconds()//60))" 2>/dev/null || echo 999)
+          busy=$(gh run list --workflow update.yml --limit 5 --json status -q '[.[] | select(.status != "completed")] | length')
+          echo "alert sent; forecast is $age min old, $busy run(s) waiting or running"
+          if [ "$age" -gt 20 ] && [ "$busy" = "0" ]; then gh workflow run update.yml --ref main && echo "forecast refresh started"; fi
       - name: Save alert state
         run: |
           git config user.name "aurora-bot"
