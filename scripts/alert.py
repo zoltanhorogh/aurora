@@ -48,9 +48,12 @@ MAG_ACTIVE = 50          # nT: 50+ below the quiet level, or a 50+ change within
 MAG_WINDOW_MIN = 35      # minutes looked back: the workflow is due every 10 min but GitHub runs it every 15-30
                          # (18-29 min apart on 2 Oct 2026); a substorm moment already alerted is not alerted again
 MAG_COOLDOWN_MIN = 30    # on board a new substorm may alert again after 30 min (other alerts: COOLDOWN_MIN)
-CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows
+CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows ...
+CLOUDY_REPEAT_STRONG_MIN = 60  # ... and after 1 h while it is strong: on 3-4 and 4-5 Oct 2026 the cameras saw aurora
+                               # through gaps for hours under a forecast of 99-100% cloud
 MAG_NEAR_KM = 300
 TEST_MAX_PER_NIGHT = 2
+TEST_MAX_PER_NIGHT_STRONG = 5  # strong activity: more test alerts (4-5 Oct 2026: aurora at 23 and 02-05 h went unannounced)
 SHOCK_DV = 20            # km/s: solar wind speed jump (median of 10 min after vs 20 min before, 5 min apart)
 SHOCK_N = 1.8            # density ratio after/before
 SHOCK_B = 1.3            # Bt ratio after/before
@@ -377,7 +380,7 @@ def test_season(now, route, dry):
     last = parse_utc(t["last_alert"]) if t.get("last_alert") else None
     cooling = last and (now - last) < timedelta(minutes=COOLDOWN_MIN)
     escalation = level == "strong" and t.get("last_level") == "watch"
-    if t["count"] >= TEST_MAX_PER_NIGHT or (cooling and not escalation):
+    if t["count"] >= (TEST_MAX_PER_NIGHT_STRONG if level == "strong" else TEST_MAX_PER_NIGHT) or (cooling and not escalation):
         print("test season: alert suppressed (limit / cooldown)")
         return
 
@@ -554,7 +557,8 @@ def main():
             # turns strong or when a new substorm shows 2 hours later.
             night = night_key(now)
             c = state.get("cloudy") or {}
-            again = m and c.get("at") and now - parse_utc(c["at"]) >= timedelta(minutes=CLOUDY_REPEAT_MIN)
+            repeat = CLOUDY_REPEAT_STRONG_MIN if strong else CLOUDY_REPEAT_MIN
+            again = (m or strong) and c.get("at") and now - parse_utc(c["at"]) >= timedelta(minutes=repeat)
             if c.get("night") != night or (strong and c.get("level") == "watch") or again:
                 send("☁️ Aurora active, cloudy here — look for gaps",
                      f"{pos['place']}: forecast cloud {cloud if cloud is not None else '?'}%. "

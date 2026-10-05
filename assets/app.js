@@ -2170,6 +2170,22 @@
   }
   const cloudRange = (a, b) => (a === b ? `${a}%` : `${a}–${b}%`);
 
+  // Under cloud with activity far above the need (forecast Kp of the dark hours still to come, or Hp30 of the last
+  // hour, 3+ above it): aurora often shows through gaps and thin cloud. On 3-4 and 4-5 Oct 2026 the cameras saw it for
+  // hours (Skibotn; Tromsø 20-21, 23-00, 02-05 h) under a forecast of 99-100% cloud. The verdict itself stays.
+  function strongUnderCloud(n, v) {
+    if (v.big !== 'NO' || v.aur.cls === 'bad') return '';
+    const ahead = n.hourly.filter((h) => h.dark && hourAhead(h));
+    if (!ahead.length) return '';
+    const kp = Math.max(...ahead.map((h) => h.kp));
+    const night = ahead.some((h) => new Date(h.t).getTime() <= Date.now());
+    const hp = night ? hp30Now() : null;
+    const top = Math.max(kp, hp != null ? hp : 0);
+    if (top < n.kp_req + 3) return '';
+    const what = hp != null && hp >= kp ? `Hp30 ${hp.toFixed(1)} measured` : `Kp ${kp.toFixed(1)} forecast`;
+    return `<div class="bstrong">⚡ Strong activity (${what}, ${n.kp_req.toFixed(1)} needed here): aurora often shows through gaps and thin cloud. Worth looking out even under cloud.</div>`;
+  }
+
   // Tonight's answer plus its two parts: is there aurora (activity) and can we see it (clouds).
   function basicVerdict(n) {
     const act = n.factors.activity;
@@ -2657,7 +2673,7 @@
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
           `<div class="bf ${f.cls} tapgo" data-go="${k === 'Aurora' ? 'aurora' : 'sky'}" role="button" tabindex="0"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
         ${inlandBasic(t.n)}
-        <div class="bline">${esc(v.line)}</div>
+        <div class="bline">${esc(v.line)}</div>${strongUnderCloud(t.n, v)}
         ${basicChange(t.n.date, v) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date, v))}</div>` : ''}
         <div class="b-sub">${esc(darkText(t.n))}</div>
         ${basicStrip(t.n)}</div>`;
@@ -2709,6 +2725,7 @@
           <b>Low</b> = a calm field and less activity than this place needs.
           Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
           <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
+        <p><b>⚡ Strong activity</b> (green line under a cloudy answer): the activity is 3+ above what this place needs; then aurora often shows through gaps and thin cloud, so it is worth looking out even when the forecast says cloudy.</p>
         <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details. </p>
         <p><b>☄️ CME arriving</b>: the front of a solar eruption has reached the satellite that measures the solar wind, 1.5 million km from us; it gets here at the time shown. <i>Weak</i>: little extra aurora. <i>Strong</i>: a storm may follow, above all if Bz turns south.</p>
         <p><b>Inland</b> (Tromsø 15 Oct, Alta 16–17 Oct, and Tromsø for practice): MET's clouds at the usual chase-tour areas behind the coastal mountains, where it is often clearer (from Tromsø: Nordkjosbotn, Skibotn, Kilpisjärvi; from Alta: Gargia, Masi, Kautokeino). "Clearer inland" = one of them has a clear stretch (2+ hours ≤40% cloud) still to come and here has none, or one at least 2 hours shorter. Tap the line for the hours.</p>
