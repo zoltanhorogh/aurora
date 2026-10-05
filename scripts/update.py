@@ -174,19 +174,27 @@ def fetch_ensemble(points, d):
 
 
 MET_HOURLY_END = []  # last hourly time of each MET response this run
+# Cloud by layer at each MET point and hour: [low, medium, high] %. Low cloud (0-2 km) hides everything; high, thin
+# cloud (6-12 km) lets a bright aurora through: on 4 Oct 2026 Alta had 56-62% cloud at 20-22 h, almost none of it low.
+MET_LAYERS = {}
 
 
 @source("met_norway")
 def fetch_met(lat, lon):
-    """MET Norway locationforecast: hourly cloud cover for the high-resolution (~60 h) part only."""
-    js = http_get_json(f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={lat:.2f}&lon={lon:.2f}")
+    """MET Norway locationforecast: hourly cloud cover (total, and by layer into MET_LAYERS) for the high-resolution
+    (~60 h) part only."""
+    js = http_get_json(f"https://api.met.no/weatherapi/locationforecast/2.0/complete?lat={lat:.2f}&lon={lon:.2f}")
     ts = js["properties"]["timeseries"]
-    out = {}
+    out, layers = {}, MET_LAYERS.setdefault((lat, lon), {})
     for a, b in zip(ts, ts[1:]):
         ta, tb = parse_utc(a["time"]), parse_utc(b["time"])
         if tb - ta != timedelta(hours=1):
             break  # beyond this point the series is 6-hourly global-model data
-        out[iso(ta)] = a["data"]["instant"]["details"].get("cloud_area_fraction")
+        d = a["data"]["instant"]["details"]
+        out[iso(ta)] = d.get("cloud_area_fraction")
+        lay = [d.get(f"cloud_area_fraction_{k}") for k in ("low", "medium", "high")]
+        if all(v is not None for v in lay):
+            layers[iso(ta)] = [round(v) for v in lay]
     if out:
         MET_HOURLY_END.append(parse_utc(max(out)))
     return out
@@ -372,6 +380,7 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             "cloud_p90": round(percentile(vals, 0.9), 1) if vals else None,
             "cloud_met": (round(met[idx][iso(h)], 1) if met and idx < len(met)
                           and met[idx].get(iso(h)) is not None else None),
+            "cloud_layers": MET_LAYERS.get(uniq[idx], {}).get(iso(h)) if met else None,
             "_p_ens_h": sum(v <= CLEAR_MAX for v in vals) / len(vals) if vals else None,
             "_members": members,
         })
@@ -700,6 +709,7 @@ def carry_past_clouds(nights, mc, now):
                 o = hours.get(h["t"])
                 if o and o.get("cloud_met") is not None:
                     h["cloud_met"] = o["cloud_met"]
+                    h["cloud_layers"] = o.get("cloud_layers")
                     h["cloud_past"] = True
 
     for n in nights:

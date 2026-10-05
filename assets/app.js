@@ -843,6 +843,7 @@
       return `<b>${h.local}</b> · ${esc(shortPlace(h.place))}
         <div class="row"><span>Sky</span><span>${h.dark ? 'dark' : h.sun < -3 ? 'twilight' : 'daylight'}</span></div>
         ${h.cloud_met != null ? `<div class="row"><span>Cloud (MET Norway)</span><span>${h.cloud_met}%</span></div>` : ''}
+        ${h.cloud_layers ? `<div class="row"><span>low · mid · high</span><span>${h.cloud_layers.join(' · ')}%</span></div>` : ''}
         <div class="row"><span>Verdict</span><span>${hourStatus(h)[0]} ${hourStatus(h)[2]}</span></div>
         <div class="row"><span>Kp forecast</span><span>${h.kp.toFixed(1)}</span></div>
         <div class="row"><span>Kp needed here</span><span>${h.kp_req.toFixed(1)}</span></div>
@@ -1792,6 +1793,26 @@
       return out;
     };
     const runText = (axis, rs) => rs.map(([a, b]) => `${axis[a].slice(0, 2)}–${pad((+axis[b].slice(0, 2) + 1) % 24)}`).join(', ');
+    const camHours = (r) => {
+      if (r.spot !== 'Tromsø') return null; // Skibotn is ~140 km from Alta
+      const c = SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date].tromso;
+      return c && Object.keys(c).length ? c : null;
+    };
+    // What the sky really did each dark hour. Where the place has its own camera (Tromsø): open when the camera saw
+    // aurora or a clear sky, closed when it saw cloud, unknown otherwise. On 4 Oct 2026 MET's analysis said 100% cloud
+    // while the Tromsø camera saw aurora 02-05 h; the analysis is a model too. Elsewhere MET's analysis (<= 40%).
+    const truth = (r) => {
+      const o = r.observed, cam = camHours(r);
+      if (cam) {
+        return { src: 'camera', open: o.hours.map((h) => {
+          if (h[1] > -12) return null;
+          const v = cam[h[0].slice(0, 2)];
+          const w = v ? camWord(v) : null;
+          return w === 'aurora' || w === 'possible aurora' || w === 'clear' ? true : w === 'cloudy' ? false : null;
+        }) };
+      }
+      return { src: 'met', open: o.hours.map((h) => h[1] <= -12 && h[2] <= 40) };
+    };
     // Was a recorded forecast right about the clouds? Right = it said a clear stretch and there was one at that time,
     // or it said none and there was none. A forecast made before MET's hourly forecast reached the night is not judged.
     const judge = (r, key) => {
@@ -1800,7 +1821,7 @@
       if (f.hours.every((h) => h[1] === '–' || h[1] === 'twilight')) return { early: true, f };
       const axis = o.hours.map((h) => h[0]);
       const said = axis.map((l) => { const h = f.hours.find((x) => x[0] === l); return !!h && (h[1] === 'GO' || h[1] === 'TRY'); });
-      const real = axis.map((l) => (o.clear_dark || []).includes(l));
+      const real = truth(r).open.map((x) => x === true);
       const fr = runs(said), rr = runs(real);
       const ok = fr.length ? fr.some(([a, b]) => rr.some(([c, d]) => a <= d && c <= b)) : !rr.length;
       return { ok, f, said: fr.length ? `clear ${runText(axis, fr)}` : 'no clear stretch' };
@@ -1809,10 +1830,6 @@
     const score = (key) => {
       const js = recs.map((r) => judge(r, key)).filter((j) => j && !j.early);
       return js.length ? `${js.filter((j) => j.ok).length} of ${js.length}` : '–';
-    };
-    const camHours = (r) => {
-      if (r.spot !== 'Tromsø') return null; // Skibotn is ~140 km from Alta
-      return (SKY && SKY.nights && SKY.nights[r.date] && SKY.nights[r.date].tromso) || null;
     };
     const card = (r) => {
       const o = r.observed;
@@ -1823,7 +1840,9 @@
         const h = ev && ev.hours.find((x) => x[0] === l);
         return !h || h[1] === '–' ? 'u' : h[1] === 'twilight' ? 't' : { GO: 'g', TRY: 'y' }[h[1]] || 'n';
       };
-      const realCls = (h) => (h[2] <= 40 ? 'g' : h[2] <= 70 ? 'y' : 'n');
+      const tr = truth(r);
+      const realCls = (h, i) => (tr.src === 'camera' ? (h[1] > -12 ? 't' : tr.open[i] === true ? 'g' : tr.open[i] === false ? 'n' : 'u')
+        : h[2] <= 40 ? 'g' : h[2] <= 70 ? 'y' : 'n');
       const aur = (l) => {
         const v = cam && cam[l.slice(0, 2)];
         return v && camWord(v) === 'aurora' ? ' aur' : v && camWord(v) === 'possible aurora' ? ' aur maybe' : '';
@@ -1833,7 +1852,8 @@
       const head = !j ? '<span class="vres u">no evening forecast recorded</span>'
         : j.early ? '<span class="vres u">evening forecast had no hours yet</span>'
         : j.ok ? '<span class="vres ok">✓ forecast right</span>' : '<span class="vres n">✕ forecast wrong</span>';
-      const real = runs(o.hours.map((h) => h[1] <= -12 && h[2] <= 40));
+      const real = runs(tr.open.map((x) => x === true));
+      const by = tr.src === 'camera' ? 'judged by the Tromsø camera' : `judged by MET's analysis (no camera${r.spot === 'Tromsø' ? ' record' : ' here'})`;
       const camTxt = !cam ? (r.spot === 'Tromsø' ? 'camera: no record' : 'no camera nearby')
         : (() => { const a = Object.keys(cam).filter((h) => camWord(cam[h]) === 'aurora').sort(hourOrder); return a.length ? `camera saw aurora ${span(a)}` : 'camera saw no aurora'; })();
       const hp = o.hp30_max_dark;
@@ -1848,21 +1868,22 @@
         <div class="vhead"><b>${shortDay(r.date)} · ${esc(r.spot)}</b>${head}</div>
         <div class="vlab">Said that evening</div>
         <div class="vstrip" style="${cols}">${axis.map((l) => `<i class="${fcCls(l)}"></i>`).join('')}</div>
-        <div class="vlab">What happened</div>
-        <div class="vstrip" style="${cols}">${o.hours.map((h) => `<i class="${realCls(h)}${h[1] > -12 ? ' tw' : ''}${aur(h[0])}"></i>`).join('')}</div>
+        <div class="vlab">What happened · ${by}</div>
+        <div class="vstrip" style="${cols}">${o.hours.map((h, i) => `<i class="${realCls(h, i)}${h[1] > -12 && tr.src !== 'camera' ? ' tw' : ''}${aur(h[0])}"></i>`).join('')}</div>
         <div class="vaxis" style="${cols}">${axis.map((l) => `<span>${l.slice(0, 2)}</span>`).join('')}</div>
-        <div class="vtext">Said: ${j && !j.early ? j.said : '–'} · Happened: ${real.length ? `clear ${runText(axis, real)}` : 'no clear stretch'} · ${camTxt}${act ? ` · ${act}` : ''}</div>
+        <div class="vtext">Said: ${j && !j.early ? j.said : '–'} · Happened: ${real.length ? `${tr.src === 'camera' ? 'sky open' : 'clear'} ${runText(axis, real)}` : tr.src === 'camera' ? 'no open stretch on the camera' : 'no clear stretch'} · ${camTxt}${act ? ` · ${act}` : ''}</div>
         ${earlier.length ? `<div class="vtext why">Earlier forecasts: ${earlier.join(' · ')}</div>` : ''}
       </div>`;
     };
-    const clearNights = recs.filter((r) => runs(r.observed.hours.map((h) => h[1] <= -12 && h[2] <= 40)).length).length;
+    const clearNights = recs.filter((r) => runs(truth(r).open.map((x) => x === true)).length).length;
+    const camNights = recs.filter((r) => truth(r).src === 'camera').length;
     return `
       <details class="vwrap" id="ver"><summary><b>How did it go? Past nights</b> <span class="why">· evening forecast right on ${score('forecast')}</span></summary>
-      <p class="vsum">The evening forecast got the clouds right on <b>${score('forecast')}</b> nights · 1 day before <b>${score('forecast_1d')}</b> · 2 days before <b>${score('forecast_2d')}</b>. A clear stretch happened on <b>${clearNights} of ${recs.length}</b> nights (Tromsø and Alta together).</p>
+      <p class="vsum">The evening forecast got the clouds right on <b>${score('forecast')}</b> nights · 1 day before <b>${score('forecast_1d')}</b> · 2 days before <b>${score('forecast_2d')}</b>. A clear stretch happened on <b>${clearNights} of ${recs.length}</b> nights (Tromsø and Alta together). ${camNights} of the nights are judged by the Tromsø camera, the others by MET's analysis afterwards, which is a model too.</p>
       <p class="hint" style="margin-top:0"><b>Right</b> = it said a clear stretch (2+ dark hours ≤40% cloud) and there was one at that time, or it said none and there was none. Forecasts made before MET's hourly forecast reached the night are shown but not counted.</p>
       <div class="vlegend"><span><b class="g"></b>go / clear ≤40%</span><span><b class="y"></b>maybe / broken ≤70%</span><span><b class="n"></b>no / cloudy</span><span><b class="t"></b>twilight</span><span><b class="g aur"></b>camera saw aurora (Tromsø)</span></div>
       <div class="vgrid">${recs.map(card).join('')}</div>
-      <p class="hint">Upper strip: the forecast's verdict for each hour that evening (the run before 20:00). Lower strip: MET Norway's analysed cloud afterwards (from its latest runs, not a satellite photo); faded = twilight. Camera = the Tromsø all-sky camera AI (checked several times an hour since 2 Oct, once an hour before). Hp30 = strongest half hour of planetary activity in the dark hours.</p>
+      <p class="hint">Upper strip: the forecast's verdict for each hour that evening (the run before 20:00). Lower strip: in Tromsø the camera where it has a record (green = it saw aurora or a clear sky, dark = cloud, hatched = no picture, blue = twilight), elsewhere MET Norway's analysed cloud afterwards (a model, not a photo; faded = twilight). Camera = the Tromsø all-sky camera AI (checked several times an hour since 2 Oct, once an hour before). Hp30 = strongest half hour of planetary activity in the dark hours.</p>
       </details>`;
   }
 
@@ -2186,6 +2207,17 @@
     return `<div class="bstrong">⚡ Strong activity (${what}, ${n.kp_req.toFixed(1)} needed here): aurora often shows through gaps and thin cloud. Worth looking out even under cloud.</div>`;
   }
 
+  // Which layer the cloud of some hours mostly is (MET's cloud_layers: low, medium, high %): low cloud hides everything,
+  // high thin cloud lets a bright aurora through.
+  const layerWord = (hours) => {
+    const ls = hours.map((h) => h.cloud_layers).filter(Boolean);
+    if (!ls.length) return '';
+    const mean = (k) => ls.reduce((s, l) => s + l[k], 0) / ls.length;
+    const [lo, mid, hi] = [mean(0), mean(1), mean(2)];
+    return lo >= 50 ? 'mostly low, thick cloud' : mid >= 50 ? 'mostly mid-level cloud' : hi >= 50 ? 'mostly high, thin cloud' : '';
+  };
+  const layerText = (h) => (h.cloud_layers ? ` (low ${h.cloud_layers[0]} · mid ${h.cloud_layers[1]} · high ${h.cloud_layers[2]})` : '');
+
   // Tonight's answer plus its two parts: is there aurora (activity) and can we see it (clouds).
   function basicVerdict(n) {
     const act = n.factors.activity;
@@ -2212,14 +2244,14 @@
       const inWin = win.hours;
       sky = inWin.every((h) => h.cloud_met <= CLEAR_LINE)
         ? { cls: 'ok', word: '✓ Clear gap', sub: `${range(inWin)} ${win.text}` }
-        : { cls: 'mid', word: 'Partly cloudy', sub: `${range(inWin)} ${win.text}` };
+        : { cls: 'mid', word: 'Partly cloudy', sub: `${range(inWin)} ${win.text}${layerWord(inWin) ? ` · ${layerWord(inWin)}` : ''}` };
     } else if (hrs.some((h, i) => i > 0 && h.cloud_met <= CLEAR_LINE && hrs[i - 1].cloud_met <= CLEAR_LINE && new Date(h.t) - new Date(hrs[i - 1].t) === 3600e3)) {
       sky = { cls: 'ok', word: '✓ Clear', sub: `${clearH} of ${hrs.length} dark hours ≤40% cloud${hrs.length < all.length ? ' still to come' : ''}` };
     } else if (clearH) {
       // single clear hours only: no 2-hour gap, so no window (the clear-gap rule everywhere on the page)
       sky = { cls: 'mid', word: 'Mostly cloudy', sub: `only single clear hours: ${span(hrs.filter((h) => h.cloud_met <= CLEAR_LINE).map((h) => h.local))}` };
     } else {
-      sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} ${rest}` : 'no clear hour' };
+      sky = { cls: 'bad', word: '✕ Cloudy', sub: hrs.length ? `${range(hrs)} ${rest}${layerWord(hrs) ? ` · ${layerWord(hrs)}` : ''}` : 'no clear hour' };
     }
     const line = !win && sky.word === 'Mostly cloudy' ? 'Only single clear hours: a short gap at best, no clear stretch.'
       : aur.cls === 'ok' && sky.cls === 'bad' ? 'The aurora is there, the clouds hide it.'
@@ -2312,7 +2344,7 @@
         : `${head}not forecast yet: MET Norway's hourly forecast reaches this hour ${metFromText(n) ? `from ${metFromText(n)}` : 'in a later run'}`;
     }
     const lab = hourStatus(h)[0];
-    const cloud = `cloud ${Math.round(h.cloud_met)}%`;
+    const cloud = `cloud ${Math.round(h.cloud_met)}%${layerText(h)}`;
     const act = `aurora chance ${pct(h.p_act)} (${kpChip(h.kp)}, needed here ${h.kp_req.toFixed(1)})`;
     const why = lab === 'GO' ? `${cloud} (≤40%) and ${act}`
       : lab === 'TRY' ? (h.cloud_met > CLEAR_LINE ? `${cloud}: more than 40% but ≤70%, gaps likely · ${act}` : `${cloud} (≤40%), but ${act} is only 25–50%`)
