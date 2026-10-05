@@ -1133,6 +1133,10 @@
     for (const pts of list) pts.forEach(([t, v], i) => { if (t >= from && (v <= -MAG_JUMP || Math.abs(d10At(pts, i)) >= MAG_JUMP)) ev.push(t); });
     return ev.sort((a, b) => a - b);
   }
+  // A substorm proper pulls the field below its quiet level (the westward current, mostly around midnight). Fast swings
+  // while it stays above it (the eastward current of the evening side: Kilpisjärvi +100 -> +161 -> +84 nT at 17:23-17:43
+  // on 5 Oct 2026) are activity too, but "moving", not "substorm".
+  const belowQuiet = (list, from) => list.some((pts) => pts.some(([t, v], i) => t >= from && (v <= -MAG_JUMP || (v < 0 && d10At(pts, i) <= -MAG_JUMP))));
   // Hp30 now: the higher of the last two published half hours (one hour: no flicker around the need), or null when
   // the newest is older than 2 hours. A half hour is published about 30 minutes after it starts.
   function hp30Now() {
@@ -1186,14 +1190,16 @@
     // between two 10-minute looks is still a substorm (Kilpisjärvi +83 nT at 22:49 on 1 Oct 2026, back to -2 at 22:51)
     const near = Object.values(st).filter((x) => x.series && km(x) <= 300).map(magPts).filter((p) => p.length);
     const recentSub = substormTimes(near, Date.now() - 1800e3).length > 0;
-    const word = m.now <= -50 || best.change_10 <= -50 || Math.abs(m.d10) >= MAG_JUMP || recentSub ? 'substorm'
+    const active = m.now <= -50 || best.change_10 <= -50 || Math.abs(m.d10) >= MAG_JUMP || recentSub;
+    const word = active ? (m.now <= -50 || belowQuiet(near, Date.now() - 1800e3) ? 'substorm' : 'moving')
       : m.d10 >= 5 ? 'rising' : m.d10 <= -5 ? 'falling' : Math.abs(m.now) < 20 ? 'calm' : 'steady';
     const strong = m.now <= -200 || best.swing_60 >= 200 ? ' · <span class="ok">strong: go outside if clear</span>' : '';
     const when = m.evening ? 'this evening' : 'last 3 h';
     setTile('lt-mag', `${nT(m.now)}<small> nT</small> <span class="magarrow">${arrow}</span> <span class="magword ${word}">${word}</span>`,
       `${magSpark(m.pts)}<div>${when}: ${[[m.low, 'lowest'], [m.peak, 'peak']].sort((x, y) => x[0][0] - y[0][0])
         .map(([q, k]) => `${k} ${nT(q[1])} at ${hm(new Date(q[0]))}`).join(' → ')} → now ${nT(m.now)}${strong}</div>
-      <div class="why">${word === 'calm' ? 'calm field: no substorm now, quiet arcs still possible · ' : ''}vs the quiet level · ${where}</div>`);
+      <div class="why">${word === 'calm' ? 'calm field: no substorm now, quiet arcs still possible · '
+        : word === 'moving' ? 'fast swings above the quiet level: strong currents of the evening side, the aurora is active (after dark often bright arcs, substorms later) · ' : ''}vs the quiet level · ${where}</div>`);
   }
 
   function refreshNoaaTiles() {
@@ -1993,13 +1999,13 @@
       const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}`;
       return `<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
         <td class="${gCls}">${arrow}${kmh(e.wind)}${e.gust != null ? `<span class="why"> (${kmh(e.gust)})</span>` : ''}</td>
-        <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null && !compact ? `<span class="why"> ${r0(e.pp)}%</span>` : ''}</td>
+        <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null ? `${compact ? '<br>' : ' '}<span class="why">${r0(e.pp)}%</span>` : ''}</td>
         <td class="${e.uv >= 6 ? 'wx-orange' : e.uv >= 3 ? 'wx-uv' : ''}">${e.uv != null ? r0(e.uv) : '–'}</td></tr>`;
     }).join('');
   }
   const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
-    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind km/h</th><th>Rain mm${compact ? '' : ' · %'}</th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
-    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain: amount in mm${compact ? '' : ', then the chance of rain in %'} · UV index for a clear sky: 0–2 low, 3–5 moderate (use sunscreen), 6–7 high, 8+ very high</div>`;
+    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind<br><small>km/h</small></th><th>Rain<br><small>mm${series.some((e) => e.pp != null) ? ' · %' : ''}</small></th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
+    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain: amount in mm${series.some((e) => e.pp != null) ? `, then the chance that it rains at all in that hour (or 6 hours) in %${series.some((e) => e.pp_src) ? ' (here from Open-Meteo: MET gives none outside its Nordic area)' : ''}` : ''} · UV index for a clear sky: 0–2 low, 3–5 moderate (use sunscreen), 6–7 high, 8+ very high</div>`;
   const wxSummaryLine = (s) => (s ? `${r0range(s.t_min, s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
@@ -2373,7 +2379,11 @@
       if (low <= -200 || near.some((s) => s.swing_60 >= 200)) return ['strong', 'Strong', `magnetometer ${nT(low)} nT: big display overhead`];
       const ev = substormTimes(list, eveningFrom());
       const recent = ev.filter((t) => t > now - 1800e3);
-      if (recent.length) return ['active', 'Active', `substorm on the magnetometer at ${hm(new Date(recent[recent.length - 1]))}: aurora moving now`];
+      if (recent.length) {
+        const at = hm(new Date(recent[recent.length - 1]));
+        return ['active', 'Active', belowQuiet(list, now - 1800e3) ? `substorm on the magnetometer at ${at}: aurora moving now`
+          : `fast swings on the magnetometer at ${at}, above its quiet level: the aurora is active`];
+      }
       // charging: a slow rise of the nearest station since tonight's last substorm (or since 16:00)
       const p0 = list[0];
       const since = p0.filter(([t]) => t >= (ev.length ? ev[ev.length - 1] : eveningFrom()));

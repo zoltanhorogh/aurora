@@ -51,6 +51,27 @@ def met_complete(lat, lon, alt=None):
     return out
 
 
+def fill_rain_chance(series, lat, lon):
+    """MET gives the chance of rain only in its Nordic area; elsewhere (Southampton) Open-Meteo's chance (ECMWF/GFS),
+    the highest hour of each 6-hour block. Marks those entries pp_src = "Open-Meteo"."""
+    if not series or any(e.get("pp") is not None for e in series):
+        return series
+    try:
+        js = http_get_json("https://api.open-meteo.com/v1/forecast"
+                           f"?latitude={lat:.3f}&longitude={lon:.3f}&hourly=precipitation_probability&forecast_days=16&timezone=GMT")
+    except Exception as e:  # the forecast still shows the rain amount
+        print("rain chance (Open-Meteo) failed:", e)
+        return series
+    pp = {t + ":00Z": v for t, v in zip(js["hourly"]["time"], js["hourly"]["precipitation_probability"]) if v is not None}
+    for e in series:
+        t0 = parse_utc(e["t"])
+        vals = [pp.get(iso(t0 + timedelta(hours=k))) for k in range(e.get("step", 1))]
+        vals = [v for v in vals if v is not None]
+        if vals:
+            e["pp"], e["pp_src"] = max(vals), "Open-Meteo"
+    return series
+
+
 def met_ocean(lat, lon):
     out = []
     for ts in http_get_json(f"{MET}/oceanforecast/2.0/complete?lat={lat:.3f}&lon={lon:.3f}")["properties"]["timeseries"]:
@@ -280,7 +301,7 @@ def here_forecast(route, now, aboard_from, hours=24):
             (lat, lon), place = TROMSO, "Tromsø (practice)"
         key = (round(lat * 4) / 4, round(lon * 4) / 4)
         if key not in cache:
-            cache[key] = {e["t"]: e for e in met_complete(*key) if e["step"] == 1}
+            cache[key] = {e["t"]: e for e in fill_rain_chance(met_complete(*key), *key) if e["step"] == 1}
         e = cache[key].get(iso(h))
         if e:
             series.append({**e, "place": place})
@@ -317,7 +338,7 @@ def main():
         else:
             start, end = parse_utc(st["arrive"]), parse_utc(st["depart"])
         start, end = start + shift, end + shift
-        full =safe("met_locationforecast", met_complete, p["lat"], p["lon"], default=[])
+        full = fill_rain_chance(safe("met_locationforecast", met_complete, p["lat"], p["lon"], default=[]), p["lat"], p["lon"])
         horizon = parse_utc(full[-1]["t"]) if full else now
         series = in_window(full, start, end)
         # "Right now": the next 48 hours at this port, whatever the cruise date (like any weather app).
