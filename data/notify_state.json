@@ -27,33 +27,33 @@
  },
  "digest_values": {
   "2026-10-13": {
-   "score": 0.224,
+   "score": 0.218,
    "rating": "LOW"
   },
   "2026-10-14": {
-   "score": 0.276,
+   "score": 0.25,
    "rating": "FAIR"
   },
   "2026-10-15": {
-   "score": 0.159,
+   "score": 0.137,
    "rating": "LOW"
   },
   "2026-10-16": {
-   "score": 0.089,
+   "score": 0.09,
    "rating": "POOR"
   },
   "2026-10-17": {
-   "score": 0.121,
+   "score": 0.132,
    "rating": "LOW"
   },
   "2026-10-18": {
-   "score": 0.22,
+   "score": 0.189,
    "rating": "LOW"
   }
  },
- "digest_date": "2026-10-04",
+ "digest_date": "2026-10-05",
  "cmes_sent": [],
  "change_day": "2026-10-05",
  "changes_today": 0,
- "updated": "2026-10-04T22:51:12Z"
+ "updated": "2026-10-05T06:43:45Z"
 }
