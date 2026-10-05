@@ -1996,8 +1996,8 @@
     }).join('');
   }
   const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
-    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind</th><th>Rain</th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
-    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain in mm${compact ? '' : ', chance in %'} · UV index for a clear sky: 3+ = use sunscreen</div>`;
+    <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind km/h</th><th>Rain mm${compact ? '' : ' · %'}</th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
+    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain: amount in mm${compact ? '' : ', then the chance of rain in %'} · UV index for a clear sky: 0–2 low, 3–5 moderate (use sunscreen), 6–7 high, 8+ very high</div>`;
   const wxSummaryLine = (s) => (s ? `${r0range(s.t_min, s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
@@ -2300,8 +2300,6 @@
     return `<div class="bstrip" style="grid-template-columns:repeat(${hrs.length},1fr)">${cells}</div>
       <div class="blegend"><span><b class="g"></b>go</span><span><b class="y"></b>maybe</span><span><b class="n"></b>no</span><span><b class="t"></b>twilight (too bright)</span>${
         hrs.some((h) => h.dark && h.cloud_met == null && new Date(h.t).getTime() + 3600e3 >= now) ? '<span><b class="u"></b>not forecast yet</span>' : ''}</div>
-      ${USE_TIME_CURVE ? `<div class="bcurve" style="grid-template-columns:repeat(${hrs.length},1fr)">${hrs.map((h) => `<b style="height:${Math.round(auroraShare(h) * 30)}px"></b>`).join('')}</div>
-      <div class="blegend"><span><b class="cv"></b>how often aurora is seen at that hour on clear nights (Kiruna, 10 years)</span></div>` : ''}
       <div class="blegend bsky"><span>Icons = clouds only:</span>${[[20, 'clear ≤40%'], [55, 'broken ≤70%'], [90, 'overcast']].map(([c, t]) =>
         `<span><svg viewBox="0 0 16 16" aria-hidden="true">${skyGlyph(c)}</svg>${t}</span>`).join('')}</div>
       <div class="bwhy" id="b-why"><span class="btap">👆 Tap or slide along the hours to see why</span></div>`;
@@ -2586,7 +2584,7 @@
       }
       return { hh, cloud: metAt[hh] ?? null, kp: kpObs(t, t + 3600e3), hp: hp30In(t), need: needAt[hh] ?? need ?? kpNeedAt(lat, lon), mag };
     });
-    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%${v.n > 1 ? `; the most auroral of ${v.n} pictures` : ''})` : `${esc(c.name)} camera: no picture`);
+    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%${v.n > 1 ? `; ${v.n} checks this hour, the one with the most aurora shown` : ''})` : `${esc(c.name)} camera: no picture`);
     // the camera's keogram of that night (the whole night in one picture) to check by eye: the place's own camera,
     // else the nearest one; "latest" until the next evening, then the archive (processed about a day later)
     const kc = here || cams[0];
@@ -2747,7 +2745,7 @@
           <span class="k t">twilight</span> after sunset, before full darkness: too bright for faint aurora.
           The two tiles under the answer split it in two: <b>Aurora</b> (is the activity strong enough here: active, borderline, too weak) and <b>Sky</b> (clear gap, partly cloudy, cloudy).
           The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
-          Tap an hour in the strip to see its numbers. The big answer is the green stretch (yellow if there is none) with the best aurora hours: on clear nights aurora is seen most often around midnight (about 85% of clear nights at 23–00 h, 60% at 20 h; Kiruna all-sky camera statistics, the small green bars under the strip). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
+          Tap an hour in the strip to see its numbers. The big answer is the green stretch (yellow if there is none) with the best aurora hours: on clear nights aurora is seen most often around midnight (about 85% of clear nights at 23–00 h, 60% at 20 h; Kiruna all-sky camera statistics). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
         <p><b>Aurora now</b> comes from the nearby magnetometers when there are any (Tromsø and Alta area). It never says "quiet": a calm field only means no substorm right now, and quiet arcs are common up north.
           <b>Strong</b> = 200+ nT: a big display overhead ·
