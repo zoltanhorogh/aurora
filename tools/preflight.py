@@ -478,6 +478,19 @@ def check_door(problems):
         lint_messages(f'"message": "{title} {msg}",\n', "door open alert", problems)
 
 
+def check_camera_alert(problems):
+    """The 📷 message for a camera picture with aurora (as on 5 Oct 2026, Tromsø 00:00) reads as one sentence."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import alert  # noqa: E402
+    s = {"t": "2026-10-05T22:05:00Z", "aurora": 99, "clear": 0, "cloudy": 0}
+    title, msg = alert.camera_message("Tromsø", s, ["Skibotn"], test=True)
+    ok = "📷" in title and "00:05 ship time" in msg and "Skibotn" in msg
+    print(f"  {'ok ' if ok else 'FAIL'} camera alert message")
+    if not ok:
+        problems.append(f"camera alert message: {title} | {msg}")
+    lint_messages(f'"message": "{title} {msg}",\n', "camera alert", problems)
+
+
 def check_notify_flipflop(tmp, base_env, problems):
     """A night moving 4 points across a rating line (24% <-> 29% on 2 Oct 2026) is no change alert."""
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -768,6 +781,7 @@ def main():
             check_notify_flipflop(tmp, base_env, problems)
             check_wind_jump(problems)
             check_door(problems)
+            check_camera_alert(problems)
             make_site(web / "ship", data_ship)
             end = datetime.fromisoformat(it_s["stops"][-1]["arrive"].replace("Z", "+00:00"))
             scenarios += [

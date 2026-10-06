@@ -26,16 +26,21 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build forecast
+        timeout-minutes: 9
         run: python scripts/update.py
       - name: Port and hiking weather (MET Norway)
         continue-on-error: true   # weather must never block the aurora data commit
+        timeout-minutes: 4
         run: python scripts/weather.py
       - name: Notifications (morning digest + change alerts)
         continue-on-error: true   # a notification hiccup must never block the data commit
+        timeout-minutes: 2
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: python scripts/notify.py
       - name: Commit data
+        if: always()   # what was built is saved even if a later step hung
+        timeout-minutes: 2
         run: |
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

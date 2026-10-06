@@ -12,7 +12,8 @@ During the cruise it sends:
 Under clouds a quieter "look for gaps" message instead.
 Before and during the cruise, day or night: a "☄️ CME arrived" message when the solar wind at the L1 satellite
 jumps (a CME's shock front), 40-85 minutes before it reaches Earth (1.5 million km at its speed);
-in the dark a "🚪 door open" message when the solar wind's field is strong and turns south (a stream front); data/shock.json keeps it for the page.
+in the dark a "🚪 door open" message when the solar wind's field is strong and turns south (a stream front);
+a "📷 aurora on the camera" message when an all-sky camera near Tromsø (the practice spot / the ship in port) sees it; data/shock.json keeps it for the page.
 
 Usage:
   python alert.py            normal run (needs NTFY_TOPIC env var)
@@ -211,6 +212,42 @@ def door_check(now, dry, test, lat, lon):
     send(title, msg, priority=4, tags=["door"], dry=dry, click=DASHBOARD + "#live")
     if not dry:
         state["door"] = {"at": iso(now), "open": e["at"], "bt": e["bt"], "bz": e["bz"]}
+        save_json(DATA / "alert_state.json", state)
+
+
+CAM_SITES = {"tromso": ("Tromsø", 69.65, 18.96), "skibotn": ("Skibotn", 69.35, 20.36), "kiruna": ("Kiruna", 67.84, 20.41)}
+CAM_NEAR_KM = 60          # the camera must be this close to the ship (the page's "own camera" rule)
+CAM_COOLDOWN_MIN = 60
+
+
+def camera_message(name, s, others, test=False):
+    when = (parse_utc(s["t"]) + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%H:%M")
+    title = ("🧪 TEST · " if test else "") + f"📷 Aurora on the {name} camera right now"
+    also = f" Also on the {', '.join(others)} camera." if others else ""
+    msg = (f"{when} ship time: the all-sky camera at {name} shows aurora (AI {s['aurora']}% sure), so the sky is open there "
+           f"now.{also} Look north, away from lights.")
+    return title, msg
+
+
+def camera_check(now, dry, test, lat, lon):
+    """Aurora on an all-sky camera within 60 km (data/sky_now.json, written just before by sky_log.py): the one sign
+    that the aurora is there AND the sky is open. On 5-6 Oct 2026 the Tromsø camera saw it 19-21 and 23-02 h under a
+    forecast of 100% cloud. Tromsø while practising, on board the Tromsø port night; at most every 60 minutes."""
+    sites = (load_json(DATA / "sky_now.json", {}) or {}).get("sites") or {}
+    seen = {k: s for k, s in sites.items() if k in CAM_SITES and s.get("aurora", 0) >= 50
+            and now - parse_utc(s["t"]) <= timedelta(minutes=20)}
+    near = [k for k in seen if haversine_km((lat, lon), CAM_SITES[k][1:]) <= CAM_NEAR_KM]
+    if not near:
+        return
+    state = load_json(DATA / "alert_state.json", {}) or {}
+    last = (state.get("camera") or {}).get("at")
+    if last and now - parse_utc(last) < timedelta(minutes=CAM_COOLDOWN_MIN):
+        return
+    site = near[0]
+    title, msg = camera_message(CAM_SITES[site][0], seen[site], [CAM_SITES[k][0] for k in seen if k != site], test)
+    send(title, msg, priority=4 if test else 5, tags=["camera"], dry=dry, click=DASHBOARD + "#cams")
+    if not dry:
+        state["camera"] = {"at": iso(now), "site": site, "picture": seen[site]["t"]}
         save_json(DATA / "alert_state.json", state)
 
 
@@ -498,6 +535,7 @@ def main():
         shock_check(now, args.dry_run, test=test)
         here = (69.65, 18.96) if test else (pos["lat"], pos["lon"])  # Tromsø while practising, then the ship
         door_check(now, args.dry_run, test, *here)
+        camera_check(now, args.dry_run, test, *here)
     if now < route.start - timedelta(hours=6):
         test_season(now, route, args.dry_run)
         return

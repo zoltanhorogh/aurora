@@ -229,6 +229,12 @@
   const span = (arr) => arr.map((h) => String(h).slice(0, 2)).reduce((g, h) => ((g.length && (+g[g.length - 1][g[g.length - 1].length - 1] + 1) % 24 === +h)
     ? (g[g.length - 1].push(h), g) : [...g, [h]]), []).map((x) => `${x[0]}–${pad((+x[x.length - 1] + 1) % 24)}`).join(', ');
   // One word for an hour of the camera AI log ("bright" = moonlit sky the AI calls dusk/dawn).
+  // how sure the camera AI is of the kind of sky it chose (its categories add up to 100%)
+  const camSure = (v) => {
+    const w = camWord(v);
+    return Math.round(w === 'aurora' ? v.aurora : w === 'possible aurora' ? v.bright : w === 'bright (moon)' ? v.dusk
+      : w === 'clear' ? v.clear : w === 'cloudy' ? v.cloudy : Math.max(v.aurora, v.clear, v.cloudy, v.dusk || 0));
+  };
   const camWord = (v) => (v.aurora >= 50 ? 'aurora' : (v.bright || 0) >= 30 ? 'possible aurora' : v.dusk >= 50 ? 'bright (moon)'
     : v.clear >= 50 ? 'clear' : v.cloudy >= 50 ? 'cloudy' : 'mixed');
   const hourOrder = (a, b) => ((+a + 12) % 24) - ((+b + 12) % 24);
@@ -1486,7 +1492,13 @@
         box.className = `aichip ${cls}`;
         box.querySelector('.v').textContent = `AI: ${text}`;
         const paused = Date.now() - when > 45 * 60000;
-        box.querySelector('.s').textContent = `aurora ${Math.round(aurora)}% · clear ${Math.round(js.Aurora.Clear || 0)}% · cloudy ${Math.round(js.Aurora.Cloudy || 0)}% · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}${cls === 'moon' ? ' · the AI is unsure in moonlight: look at the picture' : ''}`;
+        const a = js.Aurora || {};
+        const sure = Math.round(cls === 'good' ? aurora : cls === 'moon' ? Math.max(a['Aurora but bright'] || 0, a['Dusk/Dawn'] || 0)
+          : cls === 'day' ? (a['Dusk/Dawn'] || 0) : cls === 'clear' ? (a.Clear || 0) : cls === 'cloud' ? (a.Cloudy || 0)
+          : Math.max(aurora, a.Clear || 0, a.Cloudy || 0));
+        box.querySelector('.s').textContent = `AI ${sure}% sure · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}${cls === 'moon' ? ' · the AI is unsure in moonlight: look at the picture' : ''}`;
+        (LIVE.cam = LIVE.cam || {})[id] = { t: when.getTime(), cls, text, sure, la, lo };
+        basicRefresh();
       }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; });
     }
   }
@@ -2411,11 +2423,28 @@
     return hp >= need ? ['possible', 'Possible', hpTxt] : ['low', 'Low', hpTxt];
   }
 
+  // The place's own all-sky camera (within 60 km, a picture of the last 20 minutes, dark there): what the sky really
+  // does, ahead of MET's forecast for the hour. On 5-6 Oct 2026 it showed aurora 19-21 and 23-02 h under a forecast of
+  // 100% cloud. [cls, word, sub] or null.
+  function camSky(metTxt) {
+    const [lat, lon] = herePos();
+    const R = Math.PI / 180;
+    const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(la * R) + Math.cos(lat * R) * Math.cos(la * R) * Math.cos((lon - lo) * R)));
+    const site = AI_SITES.find(([id, , , la, lo]) => km(la, lo) <= 60 && LIVE.cam && LIVE.cam[id]);
+    if (!site) return null;
+    const c = LIVE.cam[site[0]];
+    if (Date.now() - c.t > 20 * 60e3 || sunAltAt(new Date(), site[3], site[4]) > -10) return null;
+    const word = { good: '📷 Aurora visible', clear: '📷 Clear', cloud: '📷 Cloudy', moon: '📷 Bright sky (moon)' }[c.cls] || '📷 Mixed';
+    return [c.cls === 'good' || c.cls === 'clear' ? 'ok2' : '', word, `${esc(site[1].split(' (')[0])} camera ${hm(c.t)} (AI ${c.sure}% sure)${metTxt ? ` · ${metTxt}` : ''}`];
+  }
+
   function basicSky(n) {
     const now = Date.now();
     const drift = LIVE.from ? ` · new clouds come from the ${LIVE.from}` : '';
     const h0 = n && n.hourly.find((h) => Math.abs(new Date(h.t) - now) <= 1800e3 && h.cloud_met != null);
     if (!h0) {
+      const cs = camSky('');
+      if (cs) return cs;
       // daytime: tonight's sky in one line
       const dark = n ? n.hourly.filter((h) => h.dark && h.cloud_met != null) : [];
       if (!n) return ['', '–', 'no night to forecast'];
@@ -2430,7 +2459,7 @@
     const closing = c <= CLEAR_LINE && next.find((h) => h.cloud_met > 70);
     const big = (c <= CLEAR_LINE ? 'Clear' : c <= 70 ? 'Partly cloudy' : 'Cloudy')
       + (clearing ? ` → clearing ~${clearing.local}` : closing ? ` → clouding over ~${closing.local}` : '');
-    return [c <= CLEAR_LINE ? 'ok2' : '', big, `forecast cloud ${c}% (MET)${drift}`];
+    return camSky(`forecast said ${c}% cloud (MET)`) || [c <= CLEAR_LINE ? 'ok2' : '', big, `forecast cloud ${c}% (MET)${drift}`];
   }
 
   function basicShip(t) {
@@ -2596,7 +2625,7 @@
       }
       return { hh, cloud: metAt[hh] ?? null, kp: kpObs(t, t + 3600e3), hp: hp30In(t), need: needAt[hh] ?? need ?? kpNeedAt(lat, lon), mag };
     });
-    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI: aurora ${v.aurora}%, clear ${v.clear}%, cloud ${v.cloudy}%${v.n > 1 ? `; ${v.n} checks this hour, the one with the most aurora shown` : ''})` : `${esc(c.name)} camera: no picture`);
+    const camTxt = (c, v) => (v ? `${esc(c.name)} camera: <b>${camWord(v)}</b> (AI ${camSure(v)}% sure${v.n > 1 ? ` · looked ${v.n} times this hour, the best look shown` : ''})` : `${esc(c.name)} camera: no picture`);
     // the camera's keogram of that night (the whole night in one picture) to check by eye: the place's own camera,
     // else the nearest one; "latest" until the next evening, then the archive (processed about a day later)
     const kc = here || cams[0];
@@ -2708,6 +2737,7 @@
     add(a.last_alert, a.last_level === 'strong' ? '🔥 strong aurora: go outside' : '🟢 aurora likely: go outside');
     add(a.cloudy && a.cloudy.at, '☁️ active under cloud: look for gaps');
     add(a.door && a.door.at, '🚪 door open');
+    add(a.camera && a.camera.at, '📷 camera sees aurora');
     add(a.test && a.test.last_alert, a.test && a.test.last_level === 'strong' ? '🧪 test alert: strong activity' : '🧪 test alert: aurora active');
     const sh = recentShock(1.5);
     if (sh) add(sh.at, '☄️ CME arrived');
@@ -2793,7 +2823,7 @@
         <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details. </p>
         <p><b>☄️ CME arriving</b>: the front of a solar eruption has reached the satellite that measures the solar wind, 1.5 million km from us; it gets here at the time shown. <i>Weak</i>: little extra aurora. <i>Strong</i>: a storm may follow, above all if Bz turns south.</p>
         <p><b>Inland</b> (Tromsø 15 Oct, Alta 16–17 Oct, and Tromsø for practice): MET's clouds at the usual chase-tour areas behind the coastal mountains, where it is often clearer (from Tromsø: Nordkjosbotn, Skibotn, Kilpisjärvi; from Alta: Gargia, Masi, Kautokeino). "Clearer inland" = one of them has a clear stretch (2+ hours ≤40% cloud) still to come and here has none, or one at least 2 hours shorter. Tap the line for the hours.</p>
-        <p><b>Sky here</b>: MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
+        <p><b>Sky here</b>: where the place has its own all-sky camera (Tromsø), after dark the camera's latest picture comes first (📷 Aurora visible / Clear / Cloudy, with how sure its AI is): that is what the sky really does; then a 📷 alert also goes out. Otherwise MET's cloud forecast for this hour: clear ≤40%, partly cloudy ≤70%, cloudy above. "Clearing" or "clouding over" = a change within the next 4 hours. In the daytime it sums up tonight's dark hours. "New clouds come from the north-west" = the wind at about 3 km height, which moves the clouds: look that way on the satellite picture (Advanced › Live) to see what is coming.</p>
         <p><b>Nights</b>: overall chance = aurora × clear sky × darkness × moon and lights. GOOD 40%+, FAIR 25%+, LOW 10%+, POOR below (same colours as in the advanced view).</p>
       </details>
       <a href="#" class="badv" id="b-adv">Advanced view: all numbers, charts and explanations →</a>`;

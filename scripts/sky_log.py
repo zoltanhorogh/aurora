@@ -6,6 +6,7 @@ camera image every few minutes: aurora types (arc / discrete / diffuse, "aurora 
 and keeps, per site and hour, the most auroral of the pictures it checked (only when it is dark at the camera):
 one reading per hour missed both aurora spells over Tromsø on 1 Oct 2026 (22:50 and 01:30-02:10).
 Output: data/sky_obs.json  {night date (local evening): {site: {"HH": {...}}}}
+        data/sky_now.json  the newest fresh picture of each site, for alert.py's camera alert (not committed)
 """
 from datetime import timedelta
 
@@ -31,6 +32,7 @@ def main():
     now = utcnow()
     log = load_json(DATA / "sky_obs.json", {"nights": {}}) or {"nights": {}}
     changed = False
+    fresh = {}
     for site, fname in SITES.items():
         try:
             js = http_get_json(BASE + fname, timeout=30)
@@ -42,6 +44,7 @@ def main():
             continue  # camera/AI not updating (daytime pause or outage)
         s = summarize(js)
         s["sun"] = round(sun_alt(t, *COORDS[site]), 1)
+        fresh[site] = {**s, "t": iso(t)}
         if s["dusk"] >= 90 and s["sun"] > -10:
             continue  # real daylight/twilight: nothing to learn (a moonlit sky, also "dusk" to the AI, is kept)
         local = t + timedelta(hours=LOCAL_OFFSET)
@@ -58,6 +61,7 @@ def main():
             slot[hour] = {**s, "t": iso(t), "n": n, "last": iso(t)}
         changed = True
         print(site, night, hour, s, "checks", n)
+    save_json(DATA / "sky_now.json", {"updated": iso(now), "sites": fresh}, compact=True)
     if changed:
         nights = sorted(log["nights"])[-KEEP_NIGHTS:]
         log["nights"] = {k: log["nights"][k] for k in nights}

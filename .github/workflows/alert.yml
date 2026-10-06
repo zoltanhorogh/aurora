@@ -22,7 +22,9 @@ concurrency:
 jobs:
   alert:
     runs-on: ubuntu-24.04   # pinned: ubuntu-latest switches to 26 mid-cruise (19 Oct)
-    timeout-minutes: 8
+    timeout-minutes: 14
+    # Each step has its own short limit: on 5 Oct 2026 21:00-23:20 one slow source made every run hit the old 8-minute
+    # job limit, so nothing was saved and no alert went out during the biggest substorm (Masi -709 nT at 21:09).
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -30,11 +32,14 @@ jobs:
           python-version: "3.12"
       - name: Log all-sky camera AI (ground truth for the model check)
         continue-on-error: true
+        timeout-minutes: 2
         run: python scripts/sky_log.py
       - name: Log local magnetometer swing (live tile)
         continue-on-error: true
+        timeout-minutes: 2
         run: python scripts/mag_log.py
       - name: Check conditions and notify
+        timeout-minutes: 5
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
@@ -46,6 +51,7 @@ jobs:
       - name: Fresh forecast after an alert (the Tonight card then matches the message)
         if: always()
         continue-on-error: true
+        timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -55,6 +61,8 @@ jobs:
           echo "alert sent; forecast is $age min old, $busy run(s) waiting or running"
           if [ "$age" -gt 20 ] && [ "$busy" = "0" ]; then gh workflow run update.yml --ref main && echo "forecast refresh started"; fi
       - name: Save alert state
+        if: always()
+        timeout-minutes: 2
         run: |
           git config user.name "aurora-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -66,6 +74,7 @@ jobs:
       - name: Watchdog (start the forecast if GitHub's schedule left it out)
         if: always()
         continue-on-error: true
+        timeout-minutes: 1
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
