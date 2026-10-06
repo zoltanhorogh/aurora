@@ -1,9 +1,9 @@
 {
  "test": {
-  "night": "2026-10-05",
-  "count": 5,
-  "last_alert": "2026-10-06T01:10:40Z",
-  "last_level": "strong"
+  "night": "2026-10-06",
+  "count": 1,
+  "last_alert": "2026-10-06T17:40:40Z",
+  "last_level": "watch"
  },
  "door": {
   "at": "2026-10-04T20:40:35Z",
