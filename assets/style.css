@@ -164,6 +164,9 @@ table.itab td.past { opacity: .4; }
 .bnc { position: relative; }
 .bnc::after { content: '›'; position: absolute; top: 4px; right: 8px; font-size: 18px; color: var(--aurora); }
 .btap { color: var(--aurora); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.bupd { margin-left: 6px; padding: 1px 9px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--aurora);
+  font: inherit; font-weight: 600; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.bupd:disabled { color: var(--muted); cursor: default; }
 .bnc .r { font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .blast { font-size: 14px; margin-top: 4px; }
 .btag { font-size: 10px; color: #0b0c0e; background: #f2c230; border-radius: 4px; padding: 1px 6px; font-weight: 700; letter-spacing: .06em; margin-left: 6px; }

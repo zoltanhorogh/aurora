@@ -1223,7 +1223,7 @@
       setTile('lt-sw', `${v}<small> km/s</small>`, v >= 500 ? '✓ fast' : v >= 400 ? 'moderate' : 'slow');
     }).catch(() => setTile('lt-sw', '–', 'offline'));
     const st = $('#live-stamp');
-    if (st) st.textContent = `Updated ${hm(Date.now())} ship time · refreshes by itself while this page is open (numbers every 2 min, pictures and map every 10 min)`;
+    if (st) st.textContent = `Updated ${hm(Date.now())} ship time · refreshes by itself while this page is open (numbers, camera AI and the magnetometer file every 2 min, pictures and map every 10 min)`;
   }
 
   // Files the robot writes: Hp30 and the magnetometer swing.
@@ -1252,34 +1252,41 @@
     return { gw, trend: hourAgo == null ? '' : gw >= hourAgo + 5 ? ' ↑' : gw <= hourAgo - 5 ? ' ↓' : ' →' };
   }
 
-  function refreshOvation() {
-    const [lat, lon, label] = herePos();
-    Promise.all([getOvation(), getHpi().catch(() => null)]).then(([o, hpi]) => {
-      const { local, north } = ovationAt(o, lat, lon);
-      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
+  // NOAA recomputes it every 5 minutes, so it has its own 5-minute job (the big OVATION file stays at 10)
+  function refreshHpi() {
+    return getHpi().then((hpi) => {
       // its own tile with a big number (as a small line under "Aurora overhead" it was easy to miss; user, 4 Oct)
       if (hpi) setTile('lt-hpi', `${hpi.gw}<small> GW</small> <span class="magarrow">${hpi.trend.trim()}</span> <span class="magword">${hpiWord(hpi.gw)}</span>`,
         'all aurora over the northern hemisphere · calm under 20 · active 20–50 · storm 50+ · big storm 100+');
       else setTile('lt-hpi', '–', 'not available right now');
+    }).catch(() => setTile('lt-hpi', '–', 'offline'));
+  }
+
+  function refreshOvation() {
+    const [lat, lon, label] = herePos();
+    getOvation().then((o) => {
+      const { local, north } = ovationAt(o, lat, lon);
+      setTile('lt-ov', `${local}<small> %</small>`, `${label} · ${north}% in view to the north`);
       LIVE.ov = local;
       basicRefresh();
-    }).catch(() => { setTile('lt-ov', '–', 'offline'); setTile('lt-hpi', '–', 'offline'); });
+    }).catch(() => setTile('lt-ov', '–', 'offline'));
     drawOvationMap();
     renderRouteOvation();
   }
 
-  // Bigger downloads: OVATION model and map, Bz chart, camera pictures and AI, magnetogram.
+  // Bigger downloads: OVATION model and map, Bz chart, camera pictures, magnetogram.
   function refreshHeavy() {
     OVATION = null;
     refreshOvation();
     loadBz();
     loadSat();
     document.querySelectorAll('img[data-live]').forEach((img) => { img.src = `${img.dataset.live}?t=${Date.now()}`; });
-    loadAiChips();
   }
 
   // Live values refresh themselves while the page is visible; a hidden tab or a locked phone downloads nothing.
-  const LIVE_JOBS = [[2, refreshNoaaTiles], [5, refreshRobotFiles], [10, refreshHeavy]];
+  // The small files every 2 minutes (the camera AI and the robot's files are a few kB; user, 6 Oct 2026: Basic as
+  // close to real time as it can be), NOAA's hemispheric power every 5, the big model, map and pictures every 10.
+  const LIVE_JOBS = [[2, refreshNoaaTiles], [2, refreshRobotFiles], [2, loadAiChips], [5, refreshHpi], [10, refreshHeavy]];
   const liveLast = new Map();
   function liveTick() {
     if (document.visibilityState !== 'visible') return;
@@ -1287,6 +1294,13 @@
     for (const [min, fn] of LIVE_JOBS) {
       if (now - (liveLast.get(fn) || 0) >= min * 60e3 - 5e3) { liveLast.set(fn, now); safe(fn); }
     }
+  }
+  // "↻ update" on the basic Right now card: the small live files at once, without waiting for the next round
+  function liveNow() {
+    const now = Date.now();
+    [refreshNoaaTiles, refreshRobotFiles, loadAiChips, refreshHpi].forEach((fn) => liveLast.set(fn, now));
+    refreshNoaaTiles();
+    return Promise.allSettled([refreshRobotFiles(), loadAiChips(), refreshHpi()]).then(basicRefresh);
   }
   function startLiveRefresh() {
     const now = Date.now();
@@ -1322,6 +1336,7 @@
       <div class="legend" style="margin-top:8px"><span><i style="background:#1faa59"></i>possible (≥5%)</span><span><i style="background:#9fd13b"></i>likely (≥20%)</span><span><i style="background:#f2c230"></i>very likely (≥40%)</span><span><i style="background:#e5533d"></i>strong (≥60%)</span></div>
       <div class="hint" id="ovmap-meta"></div>`;
     refreshOvation();
+    refreshHpi();
   }
 
   // OVATION probability overhead (±1°) and the strongest value within view to the north (up to 8° north, ±10° lon).
@@ -1483,7 +1498,7 @@
   }
 
   function loadAiChips() {
-    for (const [id, , file, la, lo] of AI_SITES) {
+    return Promise.all(AI_SITES.map(([id, , file, la, lo]) =>
       getJSON(AI_BASE + file).then((js) => {
         const when = new Date(js.Time.replace(' ', 'T') + 'Z');
         const [cls, text, aurora] = aiVerdict(js.Aurora || {}, sunAltAt(when, la, lo));
@@ -1499,8 +1514,7 @@
         box.querySelector('.s').textContent = `AI ${sure}% sure · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}${cls === 'moon' ? ' · the AI is unsure in moonlight: look at the picture' : ''}`;
         (LIVE.cam = LIVE.cam || {})[id] = { t: when.getTime(), cls, text, sure, la, lo };
         basicRefresh();
-      }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; });
-    }
+      }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; })));
   }
 
   // ------------------------------------------------------------ local magnetometers (Tromsø Geophysical Observatory)
@@ -2189,7 +2203,22 @@
     window.scrollTo({ top: 0, behavior: 'instant' });
     if (then) setTimeout(then, 50);
   }
-  const basicRefresh = () => { if (MODE === 'basic') safe(renderBasic); };
+  // The live jobs redraw the basic view every couple of minutes: keep what the reader opened (Detailed hourly, How is
+  // this decided?) and the hour they tapped, else the page would close and clear itself under their finger.
+  const basicRefresh = () => {
+    if (MODE !== 'basic') return;
+    const el = $('#basic');
+    const keys = (list) => { const seen = {}; return list.map((x) => { const k = x.id || x.className; seen[k] = (seen[k] || 0) + 1; return `${k}#${seen[k]}`; }); };
+    const dets = el ? [...el.querySelectorAll('details')] : [];
+    const open = new Set(keys(dets).filter((k, i) => dets[i].open));
+    const sel = el ? [...el.querySelectorAll('.bstrip > .sel, .pstrip > .sel')].map((c) => [c.parentElement.className, [...c.parentElement.children].indexOf(c)]) : [];
+    safe(renderBasic);
+    if (!el) return;
+    const now = [...el.querySelectorAll('details')];
+    keys(now).forEach((k, i) => { if (open.has(k)) now[i].open = true; });
+    // a click that does not bubble: the cell's own handler selects and explains it, the card's links stay untouched
+    for (const [cls, i] of sel) { const c = el.getElementsByClassName(cls)[0]; if (c && c.children[i]) c.children[i].dispatchEvent(new MouseEvent('click')); }
+  };
 
   // "Tonight" = the night in progress until its darkness ends at its place (nightEnd), then the coming night.
   // Before the cruise nights it is Tromsø (practice, from the model check); after the last one there is none (n: null).
@@ -2371,10 +2400,22 @@
     return `${head}<span class="k ${word[0]}">${word[1]}</span> ${why}${meas}${h.cloud_past ? ' · this hour is over: last forecast made before it' : ''}`;
   }
 
-  // Aurora now, from the nearby FMI magnetometers when there are any (up north), else Hp30 and the NOAA model.
+  // Aurora now: a nearby all-sky camera that sees aurora comes first (the picture is the surest sign; the magnetometer
+  // reaches the page only every 10 minutes, through the robot). It never overrules the other way round: a camera
+  // without aurora may be under cloud, so then the measured state below stands.
+  function basicAuroraNow() {
+    const r = auroraNowMeasured();
+    const c = r[0] === 'day' ? null : camNear();
+    if (!c || c.cls !== 'good') return r;
+    const seen = `📷 ${esc(c.name)} camera ${hm(c.t)}: aurora (AI ${c.sure}% sure)`;
+    if (r[0] === 'strong') return ['strong', 'Strong', `${seen} · ${r[2]}`];
+    return ['active', 'Visible', r[0] === 'active' ? `${seen} · ${r[2]}` : seen];
+  }
+
+  // Aurora measured, from the nearby FMI magnetometers when there are any (up north), else Hp30 and the NOAA model.
   // Never "quiet": a calm field only means no substorm right now; quiet arcs are common at these latitudes, so a calm
   // field is "Possible" when the measured activity (Hp30, last hour) is enough for this place, else "Low".
-  function basicAuroraNow() {
+  function auroraNowMeasured() {
     const [lat, lon] = herePos();
     const need = kpNeedAt(lat, lon);
     if (sunAltAt(new Date(), lat, lon) > -6) return ['day', 'Daylight', 'too bright to see aurora now; check again after dark'];
@@ -2426,7 +2467,9 @@
   // The place's own all-sky camera (within 60 km, a picture of the last 20 minutes, dark there): what the sky really
   // does, ahead of MET's forecast for the hour. On 5-6 Oct 2026 it showed aurora 19-21 and 23-02 h under a forecast of
   // 100% cloud. [cls, word, sub] or null.
-  function camSky(metTxt) {
+  // The nearby camera's latest AI look ({cls, sure, t, name}), or null: within 60 km, a picture of the last 20
+  // minutes, dark at the camera.
+  function camNear() {
     const [lat, lon] = herePos();
     const R = Math.PI / 180;
     const km = (la, lo) => 6371 * Math.acos(Math.min(1, Math.sin(lat * R) * Math.sin(la * R) + Math.cos(lat * R) * Math.cos(la * R) * Math.cos((lon - lo) * R)));
@@ -2434,8 +2477,14 @@
     if (!site) return null;
     const c = LIVE.cam[site[0]];
     if (Date.now() - c.t > 20 * 60e3 || sunAltAt(new Date(), site[3], site[4]) > -10) return null;
+    return { ...c, name: site[1].split(' (')[0] };
+  }
+
+  function camSky(metTxt) {
+    const c = camNear();
+    if (!c) return null;
     const word = { good: '📷 Aurora visible', clear: '📷 Clear', cloud: '📷 Cloudy', moon: '📷 Bright sky (moon)' }[c.cls] || '📷 Mixed';
-    return [c.cls === 'good' || c.cls === 'clear' ? 'ok2' : '', word, `${esc(site[1].split(' (')[0])} camera ${hm(c.t)} (AI ${c.sure}% sure)${metTxt ? ` · ${metTxt}` : ''}`];
+    return [c.cls === 'good' || c.cls === 'clear' ? 'ok2' : '', word, `${esc(c.name)} camera ${hm(c.t)} (AI ${c.sure}% sure)${metTxt ? ` · ${metTxt}` : ''}`];
   }
 
   function basicSky(n) {
@@ -2789,7 +2838,7 @@
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
     el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
-      ${s.phase === 'over' ? '' : `<div class="b-card" id="b-now"><div class="b-k">Right now · ${hm(Date.now())}</div>
+      ${s.phase === 'over' ? '' : `<div class="b-card" id="b-now"><div class="b-k">Right now · ${hm(Date.now())} <button type="button" class="bupd" id="b-upd">↻ update</button></div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
         <div class="bnights">${upcoming.map((n) => `<button class="bnc" data-date="${n.date}"><div class="d">${dayLabel(n.date).slice(0, 6)}</div>
@@ -2811,7 +2860,9 @@
           The small icon above each hour shows the clouds only (moon = clear, moon with cloud = broken, cloud = overcast); the colour combines clouds and aurora activity.
           Tap an hour in the strip to see its numbers. The big answer is the green stretch (yellow if there is none) with the best aurora hours: on clear nights aurora is seen most often around midnight (about 85% of clear nights at 23–00 h, 60% at 20 h; Kiruna all-sky camera statistics). Aurora chance = how likely the forecast activity (Kp) reaches the level needed at that latitude.
           Nights further ahead show the overall chance instead, until MET's forecast reaches them.</p>
+        ${s.phase === 'over' ? '' : '<p><b>Right now</b> updates itself every 2 minutes while the page is open (the magnetometer reaches it every 10 minutes, through the robot); <b>↻ update</b> fetches it at once.</p>'}
         <p><b>Aurora now</b> comes from the nearby magnetometers when there are any (Tromsø and Alta area). It never says "quiet": a calm field only means no substorm right now, and quiet arcs are common up north.
+          <b>Visible</b> = an all-sky camera within 60 km (Tromsø, Skibotn, Kiruna) shows aurora in a picture of the last 20 minutes: the surest sign there is, so it comes first ·
           <b>Strong</b> = 200+ nT: a big display overhead ·
           <b>Active</b> = a substorm in the last half hour (a nearby station 50+ nT below its quiet level, or a jump of 50+ nT within 10 minutes, up or down): aurora is moving now ·
           <b>Charging ↑</b> = in the evening the field has slowly risen 40+ nT above its quiet level: energy is building up, a substorm often follows later in the night (in last season's data 86% of such evenings, usually 01–03 h) ·
@@ -2842,6 +2893,8 @@
     $('#b-adv').addEventListener('click', (ev) => { ev.preventDefault(); setMode('advanced'); });
     const bl = $('#b-live');
     if (bl) bl.addEventListener('click', () => scrollToY(yOf($('#b-now'))));
+    const bu = $('#b-upd');
+    if (bu) bu.addEventListener('click', () => { bu.textContent = 'updating…'; bu.disabled = true; liveNow(); });
     const bs = $('#b-storm');
     if (bs) bs.addEventListener('click', () => setMode('advanced', () => scrollToY(yOf($('#storm')))));
     const GO = {
