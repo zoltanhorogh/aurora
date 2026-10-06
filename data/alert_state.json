@@ -1,14 +1,19 @@
 {
  "test": {
   "night": "2026-10-06",
-  "count": 2,
-  "last_alert": "2026-10-06T19:10:40Z",
-  "last_level": "watch"
+  "count": 3,
+  "last_alert": "2026-10-06T19:50:37Z",
+  "last_level": "strong"
  },
  "door": {
   "at": "2026-10-04T20:40:35Z",
   "open": "2026-10-04T20:36:00Z",
   "bt": 11.6,
   "bz": -5.1
+ },
+ "camera": {
+  "at": "2026-10-06T19:50:37Z",
+  "site": "tromso",
+  "picture": "2026-10-06T19:47:09Z"
  }
 }
