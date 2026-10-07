@@ -330,7 +330,10 @@ INJECT = r"""<script>
 
 
 def find_chrome():
-    for c in CHROMES:
+    # cloud sessions (Linux VM) have Playwright's Chromium under /opt/pw-browsers, not on the PATH (7 Oct 2026)
+    pw = Path("/opt/pw-browsers")
+    cloud = [str(p) for p in sorted(pw.glob("chromium-*/chrome-linux/chrome"), reverse=True)] if pw.exists() else []
+    for c in [*CHROMES, *cloud]:
         if Path(c).exists() or shutil.which(c):
             return c
     sys.exit("preflight: no Chrome/Edge found")
@@ -666,7 +669,9 @@ def run_script(name, args, env, problems, label):
 
 
 def page_check(chrome, url, profile):
-    r = subprocess.run([chrome, "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+    # Chrome refuses to start as root without --no-sandbox (the cloud VM runs as root)
+    root = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
+    r = subprocess.run([chrome, "--headless=new", "--disable-gpu", *root, "--no-first-run", "--no-default-browser-check",
                         f"--user-data-dir={profile}", "--window-size=1100,1400", "--virtual-time-budget=120000",
                         "--dump-dom", url], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     m = re.search(r'<script type="application/json" id="pf-result">(.*?)</script>', r.stdout, re.S)
