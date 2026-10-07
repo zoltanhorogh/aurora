@@ -2204,7 +2204,17 @@
     const links = [...document.querySelectorAll('#tabs a')];
     const obs = new IntersectionObserver((entries) => {
       entries.forEach((e) => {
-        if (e.isIntersecting) links.forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + e.target.id));
+        if (!e.isIntersecting) return;
+        links.forEach((a) => {
+          const on = a.getAttribute('href') === '#' + e.target.id;
+          a.classList.toggle('active', on);
+          // the bar slides along so the highlighted tab stays in view on a phone (user, 7 Oct 2026); sideways only,
+          // the page itself does not move
+          if (on) {
+            const nav = a.parentElement, r = a.getBoundingClientRect(), nr = nav.getBoundingClientRect();
+            nav.scrollBy({ left: r.left - nr.left - (nr.width - r.width) / 2, behavior: 'smooth' });
+          }
+        });
       });
     }, { rootMargin: '-45% 0px -50% 0px' });
     document.querySelectorAll('main section, #mag').forEach((s) => obs.observe(s));
