@@ -82,19 +82,32 @@ WMO_SYM = {0: "clearsky_", 1: "fair_", 2: "partlycloudy_", 3: "cloudy", 45: "fog
            96: "heavyrainandthunder", 99: "heavyrainandthunder"}
 
 
-def fill_hourly(series, lat, lon, start, end, alt=None):
-    """MET is hourly for ~2.5 days, then 6-hourly. Where a port day (or a spot) still has 6-hour blocks, Open-Meteo's
-    hourly forecast fills them (user, 7 Oct 2026: the departure day showed as two 6-hour rows three days ahead).
-    Those entries are marked src = "Open-Meteo"; MET's own hours replace them once its hourly range reaches the day."""
-    blocks = [e for e in series if e.get("step") == 6]
-    if not blocks:
-        return series
-    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat:.3f}&longitude={lon:.3f}&hourly={OM_HOURLY}"
-           "&wind_speed_unit=ms&forecast_days=16&timezone=GMT" + (f"&elevation={int(alt)}" if alt is not None else ""))
+def om_hourly_many(points, with_alt=False):
+    """Open-Meteo's hourly forecast for many places in one call: {(lat, lon, alt): hourly}. One call per place
+    (27 places) pushed the weather step past its 4-minute limit on 7 Oct 2026."""
+    pts = list(dict.fromkeys(points))
+    if not pts:
+        return {}
+    lats = ",".join(f"{p[0]:.3f}" for p in pts)
+    lons = ",".join(f"{p[1]:.3f}" for p in pts)
+    alts = ",".join(str(int(p[2])) for p in pts) if with_alt else ""
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lats}&longitude={lons}&hourly={OM_HOURLY}"
+           "&wind_speed_unit=ms&forecast_days=16&timezone=GMT" + (f"&elevation={alts}" if with_alt else ""))
     try:
-        h = http_get_json(url)["hourly"]
+        js = http_get_json(url, timeout=120)
     except Exception as e:  # the 6-hour blocks stay
         print("hourly fill (Open-Meteo) failed:", e)
+        return {}
+    js = js if isinstance(js, list) else [js]
+    return {p: r.get("hourly") for p, r in zip(pts, js)}
+
+
+def fill_hourly(series, h, start, end):
+    """MET is hourly for ~2.5 days, then 6-hourly. Where a port day (or a spot) still has 6-hour blocks, Open-Meteo's
+    hourly forecast `h` fills them (user, 7 Oct 2026: the departure day showed as two 6-hour rows three days ahead).
+    Those entries are marked src = "Open-Meteo"; MET's own hours replace them once its hourly range reaches the day."""
+    blocks = [e for e in series if e.get("step") == 6]
+    if not blocks or not h:
         return series
     row = {t + ":00Z": i for i, t in enumerate(h["time"])}
     out = [e for e in series if e.get("step") != 6]
@@ -373,6 +386,9 @@ def main():
     climate = (load_json(DATA / "port_climate.json", {}) or {}).get("ports", {})
     route = Route(it)
 
+    # Open-Meteo hourly for the port days MET has only in 6-hour blocks: one call for the ports, one for the spots
+    om_ports = om_hourly_many([(p["lat"], p["lon"], None) for p in cfg["ports"]])
+    om_spots = om_hourly_many([(s["lat"], s["lon"], s["ele"]) for s in cfg["spots"]], with_alt=True)
     ports_out = []
     for p in cfg["ports"]:
         st = stops[p["stop"]]
@@ -387,7 +403,7 @@ def main():
         start, end = start + shift, end + shift
         full = fill_rain_chance(safe("met_locationforecast", met_complete, p["lat"], p["lon"], default=[]), p["lat"], p["lon"])
         horizon = parse_utc(full[-1]["t"]) if full else now
-        series = fill_hourly(in_window(full, start, end), p["lat"], p["lon"], start, end)
+        series = fill_hourly(in_window(full, start, end), om_ports.get((p["lat"], p["lon"], None)), start, end)
         # "Right now": the next 48 hours at this port, whatever the cruise date (like any weather app).
         now_series = [e for e in full if e["step"] == 1 and now - timedelta(hours=1) <= parse_utc(e["t"]) <= now + timedelta(hours=48)]
         entry = {"id": p["id"], "name": p["name"], "window": [iso(start), iso(end)],
@@ -414,7 +430,7 @@ def main():
             if s["port"] != p["id"]:
                 continue
             sfull = safe("met_locationforecast", met_complete, s["lat"], s["lon"], s["ele"], default=[])
-            ss = fill_hourly(in_window(sfull, start, end), s["lat"], s["lon"], start, end, s["ele"])
+            ss = fill_hourly(in_window(sfull, start, end), om_spots.get((s["lat"], s["lon"], s["ele"])), start, end)
             summ = summarize(ss)
             ns = [e for e in sfull if e["step"] == 1 and now - timedelta(hours=1) <= parse_utc(e["t"]) <= now + timedelta(hours=36)]
             nsumm = summarize(ns)

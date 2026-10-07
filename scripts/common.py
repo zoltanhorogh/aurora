@@ -85,7 +85,13 @@ def _http_get(url, timeout=60, retries=3):
 
 
 def http_get_json(url, timeout=60):
-    return json.loads(http_get(url, timeout))
+    # a body cut off in transit arrives without an error (a cloud VM got 175 kB of the marine forecast,
+    # 7 Oct 2026): fetch it once more before giving up
+    text = http_get(url, timeout)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(_http_get(url, timeout))
 
 
 # ---------------------------------------------------------------- geometry
