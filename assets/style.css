@@ -182,6 +182,8 @@ table.itab td.past { opacity: .4; }
 .pstrip .na { background: #1c1d21; border: 1px dashed #3a3d44; }
 .bhow { margin: 14px 0 4px; font-size: 12px; color: var(--text-2); }
 .bhourly > summary { cursor: pointer; font-size: 15px; font-weight: 700; color: var(--text); padding: 2px 0; }
+.bcams-t { font-size: 15px; font-weight: 700; color: var(--text); }
+.b-card.tapgo > .bcams-t::after { content: ' ›'; color: var(--aurora); font-weight: 700; }
 .bhourly > summary::after { font-size: 12px; padding: 3px 10px; }
 .bhourly[open] > summary { margin-bottom: 10px; }
 .bhow summary { color: var(--muted); font-size: 12px; cursor: pointer; }

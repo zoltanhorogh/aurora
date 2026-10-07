@@ -2513,7 +2513,9 @@
     const site = AI_SITES.find(([id, , , la, lo]) => km(la, lo) <= 60 && LIVE.cam && LIVE.cam[id]);
     if (!site) return null;
     const c = LIVE.cam[site[0]];
-    if (Date.now() - c.t > 20 * 60e3 || sunAltAt(new Date(), site[3], site[4]) > -10) return null;
+    // a picture from the "future" (a clock set back, as in the preflight's past evenings) does not count either
+    const age = Date.now() - c.t;
+    if (age > 20 * 60e3 || age < -5 * 60e3 || sunAltAt(new Date(), site[3], site[4]) > -10) return null;
     return { ...c, name: site[1].split(' (')[0] };
   }
 
@@ -2843,6 +2845,8 @@
       nightsOver || Date.now() > new Date(D.trip.end) ? 'The cruise nights are over. All of them are under Advanced.' : 'No forecast for tonight yet.'}</div></div>`;
     if (t && t.n) {
       const v = camTonight(basicVerdict(t.n));
+      // near a camera after dark both tiles open the sky cameras: the hour details sit right below (user, 7 Oct 2026)
+      const camGo = !!camNear();
       tonight = `<div class="b-card">
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
         ${liveLine()}
@@ -2851,7 +2855,7 @@
         ${stormBasic(t.n)}
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>
-          `<div class="bf ${f.cls} tapgo" data-go="${k === 'Aurora' ? 'aurora' : 'sky'}" role="button" tabindex="0"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
+          `<div class="bf ${f.cls} tapgo" data-go="${camGo ? 'cams' : k === 'Aurora' ? 'aurora' : 'sky'}" role="button" tabindex="0"><div class="h">${k}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
         ${inlandBasic(t.n)}
         <div class="bline">${esc(v.line)}</div>${strongUnderCloud(t.n, v)}
         ${basicChange(t.n.date, v) ? `<div class="bchange">↻ ${esc(basicChange(t.n.date, v))}</div>` : ''}
@@ -2874,7 +2878,11 @@
         </div>
         <div class="chart" id="b-chart"></div>
         ${hoursTable(t.n)}</details>` : '';
-    el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}
+    // the live sky pictures one tap away, under the hour details (user, 7 Oct 2026)
+    const camRows = AI_SITES.filter(([id]) => LIVE.cam && LIVE.cam[id]).map(([id, name]) => `${name.split(' (')[0]}: ${LIVE.cam[id].text.toLowerCase()}`);
+    const camCard = s.phase === 'over' ? '' : `<div class="b-card tapgo" id="b-cams" data-go="cams" role="button" tabindex="0"><div class="bcams-t">📷 Sky cameras</div>
+      <div class="b-sub">${esc(camRows.length ? camRows.join(' · ') : 'live pictures from Tromsø, Skibotn and Kiruna')}</div></div>`;
+    el.innerHTML = `${P && morning ? prevNightCard(P) : ''}${tonight}${hourly}${camCard}
       ${s.phase === 'over' ? '' : `<div class="b-card" id="b-now"><div class="b-k">Right now · ${hm(Date.now())} <button type="button" class="bupd" id="b-upd">↻ update</button></div>
         <div class="now3">${tile('Aurora now', aword, 'a-' + acls, atxt, 'now')}${tile('Sky here', sword, scls, stxt, 'skynow')}${tile(s.sailing ? 'Ship' : 'Cruise', shipword, '', shiptxt, 'ship')}</div></div>`}
       ${!upcoming.length ? '' : `<div class="b-card"><div class="b-k">${s.sailing ? 'Next nights' : 'Cruise nights'} · <span class="btap">tap one for the details</span></div>
@@ -2886,7 +2894,7 @@
       <div class="balerts">🔔 ${s.phase === 'over' ? 'Alerts have stopped: the cruise is over.'
         : Date.now() >= new Date(D.trip.start).getTime() - 6 * 3600e3 ? "You'll get a notification when it's time to go out." : 'Test alerts are on until the day of departure.'}</div>
       <details class="bhow"><summary>How is this decided?</summary>
-        <p>Tiles and cards marked <b>›</b> open the part of the advanced view that explains them (Tonight's Aurora tile: the Kp forecast against the need; Sky: hour by hour; Aurora now: the live values; Sky here: the satellite picture; Last night: that night's details).</p>
+        <p>Tiles and cards marked <b>›</b> open the part of the advanced view that explains them (Tonight's Aurora tile: the Kp forecast against the need; Sky: hour by hour; near a camera after dark both open the sky cameras; 📷 Sky cameras: the live pictures and what the AI sees on them; Aurora now: the live values; Sky here: the satellite picture; Last night: that night's details).</p>
         <p><b>Where</b>: before the cruise, "tonight" is Tromsø, for practice. On board it follows the ship's planned position hour by hour, from Princess' published itinerary: the port while docked, the route between ports at sea. It is not live GPS, so a change of course or schedule is not known here.</p>
         <p><b>Tonight, hour by hour</b> (MET Norway's local forecast, about 2.5 days ahead):
           <span class="k g">go</span> dark, cloud ≤40% and aurora chance ≥50% ·
@@ -2937,7 +2945,7 @@
     if (bs) bs.addEventListener('click', () => setMode('advanced', () => scrollToY(yOf($('#storm')))));
     const GO = {
       aurora: () => explainTonight(t, 'chart'), sky: () => explainTonight(t, 'hours'), inland: () => explainTonight(t, 'inland'),
-      now: () => scrollToFind(() => $('#live')), skynow: () => scrollToFind(() => $('#sat')),
+      now: () => scrollToFind(() => $('#live')), skynow: () => scrollToFind(() => $('#sat')), cams: () => scrollToFind(() => $('#cams')),
       ship: () => scrollToFind(() => $('#itinerary')), weather: () => scrollToFind(() => $('#weather')), last: () => explainLast(P),
     };
     el.querySelectorAll('[data-go]').forEach((x) => x.addEventListener('click', (ev) => {
