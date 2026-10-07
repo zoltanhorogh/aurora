@@ -426,9 +426,9 @@ def test_season(now, route, dry):
         cloud = lv.get("cloud")
         sky = ("clouds ?" if cloud is None else f"clouds {cloud}% ✓ would alert on board" if cloud <= CLOUD_MAX
                else f"cloudy {cloud}% ✕")
-        lines.append(f"{st['name']} (needs Kp ≈{req:.1f}): {sky}{mag_note}")
-    live = [f"Hp30 {g['hp30']:.1f}" if "hp30" in g else "",
-            f"Bz {g['bz30']:+.1f} nT" if "bz30" in g else "", f"wind {g['speed']} km/s" if "speed" in g else ""]
+        lines.append(f"{st['name']}: {sky}{mag_note}")
+    # user, 7 Oct 2026: keep clouds, magnetometer, Hp30 and the solar wind speed; "needs Kp" and Bz say nothing to him
+    live = [f"Hp30 {g['hp30']:.1f}" if "hp30" in g else "", f"wind {g['speed']} km/s" if "speed" in g else ""]
     title = "🧪 TEST · 🔥 Strong aurora activity" if level == "strong" else "🧪 TEST · 🟢 Aurora active"
     send(title, "\n".join(lines) + "\nLive: " + " · ".join(x for x in live if x),
          priority=5 if level == "strong" else 4, tags=["test_tube"], dry=dry, click=DASHBOARD + "#live")
@@ -462,16 +462,14 @@ def send(title, message, priority=4, tags=None, dry=False, click=DASHBOARD):
         print("sent", r.status, title)
 
 
-def fmt_live(lv, req):
+def fmt_live(lv):
+    """The live numbers in a message: Hp30, solar wind speed, clouds (user, 7 Oct 2026: no "needed here", Bz or OVATION;
+    those stay on the page)."""
     parts = []
     if "hp30" in lv:
-        parts.append(f"Hp30 {lv['hp30']:.1f} measured ({req:.1f} needed here)")
-    if "bz30" in lv:
-        parts.append(f"Bz {lv['bz30']:+.1f} nT" + (" (south ✓)" if lv["bz30"] <= BZ_SOUTH else ""))
+        parts.append(f"Hp30 {lv['hp30']:.1f}")
     if "speed" in lv:
         parts.append(f"wind {lv['speed']} km/s")
-    if "ovation_local" in lv:
-        parts.append(f"OVATION {lv['ovation_local']}% overhead, {lv['ovation_north']}% to the north")
     if "cloud" in lv:
         parts.append(f"clouds {lv['cloud']}% ({lv.get('cloud_src', '')})")
     return " · ".join(parts)
@@ -524,7 +522,7 @@ def main():
     if args.test:
         lv = live_readings(pos["lat"], pos["lon"])
         send("✅ Aurora alerts are working",
-             f"Test from the dashboard. Reference point: {pos['place']}. Live: {fmt_live(lv, req)}",
+             f"Test from the dashboard. Reference point: {pos['place']}. Live: {fmt_live(lv)}",
              priority=3, tags=["white_check_mark"], dry=args.dry_run)
         return
 
@@ -586,7 +584,7 @@ def main():
                     title, prio, tags = "🔥 Strong aurora — go outside NOW", 5, ["rotating_light"]
                 else:
                     title, prio, tags = "🟢 Aurora likely — go outside", 4, ["sparkles"]
-                send(title, f"{pos['place']}. Look north, away from ship lights. {mag_txt}{fmt_live(lv, req)}",
+                send(title, f"{pos['place']}. Look north, away from ship lights. {mag_txt}{fmt_live(lv)}",
                      priority=prio, tags=tags, dry=args.dry_run, click=tonight_link(now))
                 state["last_alert"] = iso(now)
                 state["last_level"] = level
@@ -603,7 +601,7 @@ def main():
             if c.get("night") != night or (strong and c.get("level") == "watch") or again:
                 send("☁️ Aurora active, cloudy here — look for gaps",
                      f"{pos['place']}: forecast cloud {cloud if cloud is not None else '?'}%. "
-                     f"Worth a look outside for breaks in the cloud. {mag_txt}{fmt_live(lv, req)}",
+                     f"Worth a look outside for breaks in the cloud. {mag_txt}{fmt_live(lv)}",
                      priority=3, tags=["cloud"], dry=args.dry_run, click=tonight_link(now))
                 state["cloudy"] = {"night": night, "level": "strong" if strong else "watch", "at": iso(now)}
                 if m:

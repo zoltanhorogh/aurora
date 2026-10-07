@@ -72,6 +72,53 @@ def fill_rain_chance(series, lat, lon):
     return series
 
 
+OM_HOURLY = ("temperature_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m,cloud_cover,cloud_cover_low,"
+             "relative_humidity_2m,uv_index_clear_sky,precipitation,precipitation_probability,weather_code,is_day")
+# WMO weather code -> MET symbol (the page draws MET's icons); a trailing "_" gets "day" or "night"
+WMO_SYM = {0: "clearsky_", 1: "fair_", 2: "partlycloudy_", 3: "cloudy", 45: "fog", 48: "fog", 51: "lightrain", 53: "lightrain",
+           55: "rain", 56: "lightsleet", 57: "sleet", 61: "lightrain", 63: "rain", 65: "heavyrain", 66: "lightsleet", 67: "sleet",
+           71: "lightsnow", 73: "snow", 75: "heavysnow", 77: "lightsnow", 80: "lightrainshowers_", 81: "rainshowers_",
+           82: "heavyrainshowers_", 85: "lightsnowshowers_", 86: "heavysnowshowers_", 95: "rainandthunder",
+           96: "heavyrainandthunder", 99: "heavyrainandthunder"}
+
+
+def fill_hourly(series, lat, lon, start, end, alt=None):
+    """MET is hourly for ~2.5 days, then 6-hourly. Where a port day (or a spot) still has 6-hour blocks, Open-Meteo's
+    hourly forecast fills them (user, 7 Oct 2026: the departure day showed as two 6-hour rows three days ahead).
+    Those entries are marked src = "Open-Meteo"; MET's own hours replace them once its hourly range reaches the day."""
+    blocks = [e for e in series if e.get("step") == 6]
+    if not blocks:
+        return series
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat:.3f}&longitude={lon:.3f}&hourly={OM_HOURLY}"
+           "&wind_speed_unit=ms&forecast_days=16&timezone=GMT" + (f"&elevation={int(alt)}" if alt is not None else ""))
+    try:
+        h = http_get_json(url)["hourly"]
+    except Exception as e:  # the 6-hour blocks stay
+        print("hourly fill (Open-Meteo) failed:", e)
+        return series
+    row = {t + ":00Z": i for i, t in enumerate(h["time"])}
+    out = [e for e in series if e.get("step") != 6]
+    for b in blocks:
+        t0 = parse_utc(b["t"])
+        hours = [t0 + timedelta(hours=k) for k in range(6)]
+        hours = [t for t in hours if t + timedelta(hours=1) > start and t <= end]
+        if not hours or any(row.get(iso(t)) is None or h["temperature_2m"][row[iso(t)]] is None for t in hours):
+            out.append(b)  # Open-Meteo does not cover it: keep MET's block
+            continue
+        for t in hours:
+            i = row[iso(t)]
+            sym = WMO_SYM.get(h["weather_code"][i])
+            if sym and sym.endswith("_"):
+                sym += "day" if h["is_day"][i] else "night"
+            out.append({"t": iso(t), "step": 1, "src": "Open-Meteo",
+                        "T": h["temperature_2m"][i], "feels": h["apparent_temperature"][i],
+                        "wind": h["wind_speed_10m"][i], "gust": h["wind_gusts_10m"][i], "dir": h["wind_direction_10m"][i],
+                        "cloud": h["cloud_cover"][i], "low": h["cloud_cover_low"][i], "fog": None,
+                        "rh": h["relative_humidity_2m"][i], "uv": h["uv_index_clear_sky"][i],
+                        "pr": h["precipitation"][i], "pp": h["precipitation_probability"][i], "thunder": None, "sym": sym})
+    return sorted(out, key=lambda e: e["t"])
+
+
 def met_ocean(lat, lon):
     out = []
     for ts in http_get_json(f"{MET}/oceanforecast/2.0/complete?lat={lat:.3f}&lon={lon:.3f}")["properties"]["timeseries"]:
@@ -340,7 +387,7 @@ def main():
         start, end = start + shift, end + shift
         full = fill_rain_chance(safe("met_locationforecast", met_complete, p["lat"], p["lon"], default=[]), p["lat"], p["lon"])
         horizon = parse_utc(full[-1]["t"]) if full else now
-        series = in_window(full, start, end)
+        series = fill_hourly(in_window(full, start, end), p["lat"], p["lon"], start, end)
         # "Right now": the next 48 hours at this port, whatever the cruise date (like any weather app).
         now_series = [e for e in full if e["step"] == 1 and now - timedelta(hours=1) <= parse_utc(e["t"]) <= now + timedelta(hours=48)]
         entry = {"id": p["id"], "name": p["name"], "window": [iso(start), iso(end)],
@@ -367,7 +414,7 @@ def main():
             if s["port"] != p["id"]:
                 continue
             sfull = safe("met_locationforecast", met_complete, s["lat"], s["lon"], s["ele"], default=[])
-            ss = in_window(sfull, start, end)
+            ss = fill_hourly(in_window(sfull, start, end), s["lat"], s["lon"], start, end, s["ele"])
             summ = summarize(ss)
             ns = [e for e in sfull if e["step"] == 1 and now - timedelta(hours=1) <= parse_utc(e["t"]) <= now + timedelta(hours=36)]
             nsumm = summarize(ns)

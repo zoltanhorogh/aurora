@@ -1,5 +1,5 @@
 // Offline support: app shell cache-first, forecast data network-first (falls back to the last copy).
-const CACHE = 'aurora-v93';
+const CACHE = 'aurora-v94';
 const SHELL = ['./', 'index.html', 'assets/style.css', 'assets/app.js', 'assets/icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

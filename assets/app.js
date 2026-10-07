@@ -1849,12 +1849,14 @@
     };
     // Was a recorded forecast right about the clouds? Right = it said a clear stretch and there was one at that time,
     // or it said none and there was none. A forecast made before MET's hourly forecast reached the night is not judged.
+    // Both sides on the same scale: a forecast hour counts as clear at <= 40% cloud, like the real one ("maybe" hours at
+    // 68/40/68% against a real 55/46/60% made Alta 6 Oct 2026 "wrong" although both strips were the same yellow).
     const judge = (r, key) => {
       const o = r.observed, f = r[key];
       if (!f) return null;
       if (f.hours.every((h) => h[1] === '–' || h[1] === 'twilight')) return { early: true, f };
       const axis = o.hours.map((h) => h[0]);
-      const said = axis.map((l) => { const h = f.hours.find((x) => x[0] === l); return !!h && (h[1] === 'GO' || h[1] === 'TRY'); });
+      const said = axis.map((l) => { const h = f.hours.find((x) => x[0] === l); return !!h && h[1] !== '–' && h[1] !== 'twilight' && h[2] != null && h[2] <= 40; });
       const real = truth(r).open.map((x) => x === true);
       const fr = runs(said), rr = runs(real);
       const ok = fr.length ? fr.some(([a, b]) => rr.some(([c, d]) => a <= d && c <= b)) : !rr.length;
@@ -2022,7 +2024,7 @@
       const pCls = (e.pr || 0) >= 0.5 ? 'wx-wet' : '';
       const snow = /snow|sleet/.test(e.sym || '') ? ' <span class="wx-snow">snow/sleet</span>' : '';
       const arrow = e.dir != null ? `<span class="warr" style="transform:rotate(${Math.round(e.dir + 180)}deg)">↑</span>` : '';
-      const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}`;
+      const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}${e.src ? '<span class="why">*</span>' : ''}`;
       return `<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
         <td class="${gCls}">${arrow}${kmh(e.wind)}${e.gust != null ? `<span class="why"> (${kmh(e.gust)})</span>` : ''}</td>
         <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null ? `${compact ? '<br>' : ' '}<span class="why">${r0(e.pp)}%</span>` : ''}</td>
@@ -2031,7 +2033,7 @@
   }
   const wxTable = (series, lat, compact) => `<div class="tbl-wrap"><table class="wx">
     <tr><th>Time</th><th>Sky</th><th>°C</th><th>Feels</th><th>Wind<br><small>km/h</small></th><th>Rain<br><small>mm${series.some((e) => e.pp != null) ? ' · %' : ''}</small></th><th>UV</th></tr>${wxRows(series, lat, compact)}</table></div>
-    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain: amount in mm${series.some((e) => e.pp != null) ? `, then the chance that it rains at all in that hour (or 6 hours) in %${series.some((e) => e.pp_src) ? ' (here from Open-Meteo: MET gives none outside its Nordic area)' : ''}` : ''} · UV index for a clear sky: 0–2 low, 3–5 moderate (use sunscreen), 6–7 high, 8+ very high</div>`;
+    <div class="why" style="margin-top:2px">Wind in km/h, gust in brackets · rain: amount in mm${series.some((e) => e.pp != null) ? `, then the chance that it rains at all in that hour (or 6 hours) in %${series.some((e) => e.pp_src) ? ' (here from Open-Meteo: MET gives none outside its Nordic area)' : ''}` : ''} · UV index for a clear sky: 0–2 low, 3–5 moderate (use sunscreen), 6–7 high, 8+ very high${series.some((e) => e.src) ? ' · * = hourly forecast from Open-Meteo; MET Norway takes over closer to the day' : ''}</div>`;
   const wxSummaryLine = (s) => (s ? `${r0range(s.t_min, s.t_max)} °C · feels ${r0(s.feels_min)} °C · gusts up to ${kmh(s.gust_max)} km/h · rain ${r1(s.precip_total)} mm${s.snow || s.sleet ? ' · <b>snow/sleet</b>' : ''}${s.thunder_max >= 10 ? ' · thunder' : ''}` : '');
   const adviceChips = (a) => (a && a.length ? `<div class="chips">${a.map((x) => `<span class="achip">${esc(x)}</span>`).join('')}</div>` : '');
 
