@@ -487,7 +487,8 @@ def check_camera_alert(problems):
     import alert  # noqa: E402
     s = {"t": "2026-10-05T22:05:00Z", "aurora": 99, "clear": 0, "cloudy": 0}
     title, msg = alert.camera_message("Tromsø", s, ["Skibotn"], test=True)
-    ok = "📷" in title and "00:05 ship time" in msg and "Skibotn" in msg
+    again, _ = alert.camera_message("Tromsø", s, [], test=True, again=True)
+    ok = "📷" in title and "00:05 ship time" in msg and "Skibotn" in msg and "Still aurora" in again
     print(f"  {'ok ' if ok else 'FAIL'} camera alert message")
     if not ok:
         problems.append(f"camera alert message: {title} | {msg}")

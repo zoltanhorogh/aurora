@@ -217,12 +217,13 @@ def door_check(now, dry, test, lat, lon):
 
 CAM_SITES = {"tromso": ("Tromsø", 69.65, 18.96), "skibotn": ("Skibotn", 69.35, 20.36), "kiruna": ("Kiruna", 67.84, 20.41)}
 CAM_NEAR_KM = 60          # the camera must be this close to the ship (the page's "own camera" rule)
-CAM_COOLDOWN_MIN = 60
+CAM_REPEAT_MIN = 30       # aurora on the camera without a break: a reminder every 30 minutes ...
+CAM_GAP_MIN = 20          # ... and a new spell (no aurora for 20+ min before) at once (user, 7 Oct 2026: hourly was too few)
 
 
-def camera_message(name, s, others, test=False):
+def camera_message(name, s, others, test=False, again=False):
     when = (parse_utc(s["t"]) + timedelta(hours=SHIP_UTC_OFFSET)).strftime("%H:%M")
-    title = ("🧪 TEST · " if test else "") + f"📷 Aurora on the {name} camera right now"
+    title = ("🧪 TEST · " if test else "") + (f"📷 Still aurora on the {name} camera" if again else f"📷 Aurora on the {name} camera right now")
     also = f" Also on the {', '.join(others)} camera." if others else ""
     msg = (f"{when} ship time: the all-sky camera at {name} shows aurora (AI {s['aurora']}% sure), so the sky is open there "
            f"now.{also} Look north, away from lights.")
@@ -232,7 +233,8 @@ def camera_message(name, s, others, test=False):
 def camera_check(now, dry, test, lat, lon):
     """Aurora on an all-sky camera within 60 km (data/sky_now.json, written just before by sky_log.py): the one sign
     that the aurora is there AND the sky is open. On 5-6 Oct 2026 the Tromsø camera saw it 19-21 and 23-02 h under a
-    forecast of 100% cloud. Tromsø while practising, on board the Tromsø port night; at most every 60 minutes."""
+    forecast of 100% cloud. Tromsø while practising, on board the Tromsø port night. A new spell (no aurora on the
+    camera for CAM_GAP_MIN) alerts at once; while it lasts, a reminder every CAM_REPEAT_MIN."""
     sites = (load_json(DATA / "sky_now.json", {}) or {}).get("sites") or {}
     seen = {k: s for k, s in sites.items() if k in CAM_SITES and s.get("aurora", 0) >= 50
             and now - parse_utc(s["t"]) <= timedelta(minutes=20)}
@@ -240,14 +242,17 @@ def camera_check(now, dry, test, lat, lon):
     if not near:
         return
     state = load_json(DATA / "alert_state.json", {}) or {}
-    last = (state.get("camera") or {}).get("at")
-    if last and now - parse_utc(last) < timedelta(minutes=CAM_COOLDOWN_MIN):
-        return
-    site = near[0]
-    title, msg = camera_message(CAM_SITES[site][0], seen[site], [CAM_SITES[k][0] for k in seen if k != site], test)
-    send(title, msg, priority=4 if test else 5, tags=["camera"], dry=dry, click=DASHBOARD + "#cams")
+    c = state.get("camera") or {}
+    new_spell = not c.get("seen_at") or now - parse_utc(c["seen_at"]) > timedelta(minutes=CAM_GAP_MIN)
+    c["seen_at"] = iso(now)
+    if new_spell or not c.get("at") or now - parse_utc(c["at"]) >= timedelta(minutes=CAM_REPEAT_MIN):
+        site = near[0]
+        title, msg = camera_message(CAM_SITES[site][0], seen[site], [CAM_SITES[k][0] for k in seen if k != site], test,
+                                    again=not new_spell)
+        send(title, msg, priority=4 if test else 5, tags=["camera"], dry=dry, click=DASHBOARD + "#cams")
+        c.update(at=iso(now), site=site, picture=seen[site]["t"])
     if not dry:
-        state["camera"] = {"at": iso(now), "site": site, "picture": seen[site]["t"]}
+        state["camera"] = c
         save_json(DATA / "alert_state.json", state)
 
 

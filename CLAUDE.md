@@ -45,5 +45,4 @@ This repo is public. The page (GitHub Pages) is an aurora forecast for the owner
 - Substorm = a nearby station <= -50 nT, or a 50 nT change within 10 min. "Clear" = <= 40% cloud, a clear
   stretch = 2+ dark hours.
 - Alert texts keep clouds, magnetometer, Hp30 and solar wind speed; no "needs Kp", Bz or OVATION.
-- Declined, do not re-propose: long night-run job, Pushover, Alta as practice spot, wave/port-wind checks,
-  Tromsø AI site pictures in Advanced.
+- Declined, do not re-propose: long night-run job, Pushover, Alta as practice spot, wave/port-wind checks.

@@ -1489,7 +1489,10 @@
       <p class="hint" style="margin-top:0">Research all-sky cameras film the whole sky every minute. An AI (Tromsø AI) looks at each picture and says whether it shows aurora, clear sky or cloud. This is what is really happening up north now, even when the ship's sky is cloudy.</p>
       <div class="ailabel">AI verdict on the latest picture</div>
       <div class="aichips">${sites.map(([id, name]) => `<div class="aichip" id="ai-${id}"><div class="k">${esc(name)}</div><div class="v">…</div><div class="s"></div></div>`).join('')}</div>
+      <div class="ailabel" style="margin-top:12px">What the AI sees on each camera, % per class (the highest in green)</div>
+      <div class="tbl-wrap"><table class="aitbl" id="ai-tbl"></table></div>
       <div class="grid2" style="margin-top:10px">
+        <figure class="cam"><img id="cam-tromso" src="${AI_BASE}latest.jpg?t=${t}" alt="Tromsø all-sky camera, latest image" loading="lazy"><figcaption>Tromsø (UEC, the picture the AI judges) · <a href="https://tromsoe-ai.cei.uec.ac.jp/" target="_blank" rel="noopener">live page</a> · <a href="${AI_BASE}latest_keo.png?t=${t}" target="_blank" rel="noopener">tonight's keogram</a></figcaption></figure>
         <figure class="cam"><img src="https://fox.phys.uit.no/ASC/Latest_ASC01.png?t=${t}" data-live="https://fox.phys.uit.no/ASC/Latest_ASC01.png" alt="Skibotn all-sky camera, latest image" loading="lazy"><figcaption>Skibotn (UiT) · <a href="https://fox.phys.uit.no/ASC/ASC01.html" target="_blank" rel="noopener">live page</a> · <a href="https://fox.phys.uit.no/ASC/keogram_ASC01.png?t=${t}" target="_blank" rel="noopener">tonight's keogram</a></figcaption></figure>
         <figure class="cam"><img src="https://www.irf.se/alis/allsky/krn/latest_medium.jpeg?t=${t}" data-live="https://www.irf.se/alis/allsky/krn/latest_medium.jpeg" alt="Kiruna all-sky camera, latest image" loading="lazy"><figcaption>Kiruna (IRF) · <a href="https://www2.irf.se/Observatory/?link=All-sky_sp_camera" target="_blank" rel="noopener">live page</a> · <a href="https://www.irf.se/alis/allsky/krn/latest_nkeogram.gif?t=${t}" target="_blank" rel="noopener">last night's keogram</a></figcaption></figure>
       </div>
@@ -1512,9 +1515,30 @@
           : cls === 'day' ? (a['Dusk/Dawn'] || 0) : cls === 'clear' ? (a.Clear || 0) : cls === 'cloud' ? (a.Cloudy || 0)
           : Math.max(aurora, a.Clear || 0, a.Cloudy || 0));
         box.querySelector('.s').textContent = `AI ${sure}% sure · picture from ${hm(when)} ship time${paused ? ' (cameras pause in daylight; this is the last dark-sky picture)' : ''}${cls === 'moon' ? ' · the AI is unsure in moonlight: look at the picture' : ''}`;
-        (LIVE.cam = LIVE.cam || {})[id] = { t: when.getTime(), cls, text, sure, la, lo };
+        (LIVE.cam = LIVE.cam || {})[id] = { t: when.getTime(), cls, text, sure, la, lo, raw: a };
+        // the picture the AI judged, refreshed with its verdict (every 2 minutes) instead of with the other pictures
+        const im = id === 'tromso' && document.getElementById('cam-tromso');
+        if (im) im.src = `${AI_BASE}latest.jpg?t=${when.getTime()}`;
+        renderAiTable();
         basicRefresh();
       }).catch(() => { const box = document.getElementById(`ai-${id}`); if (box) box.querySelector('.v').textContent = 'offline'; })));
+  }
+
+  // The AI's eight classes for each camera, as on the Tromsø AI page (user, 7 Oct 2026: "Latest Status" under the
+  // pictures). The aurora classes come first; each camera's highest value is green.
+  const AI_CLASSES = ['Arc', 'Discrete', 'Diffuse', 'Aurora but cloudy', 'Aurora but bright', 'Clear', 'Cloudy', 'Dusk/Dawn'];
+  function renderAiTable() {
+    const el = document.getElementById('ai-tbl');
+    if (!el || !LIVE.cam) return;
+    const cols = AI_SITES.filter(([id]) => LIVE.cam[id] && LIVE.cam[id].raw);
+    if (!cols.length) return;
+    const top = (id) => Math.max(...AI_CLASSES.map((k) => LIVE.cam[id].raw[k] || 0));
+    el.innerHTML = `<tr><th>Class</th>${cols.map(([, name]) => `<th>${esc(name.split(' (')[0])}</th>`).join('')}</tr>`
+      + AI_CLASSES.map((k, i) => `<tr${i < 5 ? ' class="aur"' : ''}><td>${k}</td>${cols.map(([id]) => {
+        const v = Math.round(LIVE.cam[id].raw[k] || 0);
+        return `<td class="num${v && v === Math.round(top(id)) ? ' top' : ''}">${v}</td>`;
+      }).join('')}</tr>`).join('')
+      + `<tr class="when"><td>picture</td>${cols.map(([id]) => `<td class="num">${hm(LIVE.cam[id].t)}</td>`).join('')}</tr>`;
   }
 
   // ------------------------------------------------------------ local magnetometers (Tromsø Geophysical Observatory)
