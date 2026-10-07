@@ -2316,6 +2316,17 @@
     return { cls: 'n', big: 'NO', small: aur.cls === 'bad' ? 'too quiet here' : 'cloudy', aur, sky, line };
   }
 
+  // A nearby all-sky camera that sees aurora now outranks the forecast on the Tonight card (user, 7 Oct 2026: "NO
+  // cloudy" while the Tromsø camera showed aurora and the Live line said so). Back to the forecast when it stops.
+  function camTonight(v) {
+    const c = camNear();
+    if (!c || c.cls !== 'good') return v;
+    const said = (v.sky.sub || '').replace(/ (for the rest of the night|all night).*$/, '');
+    return { ...v, cls: 'g', big: 'NOW', small: `📷 aurora on the ${c.name} camera (${hm(c.t)})`,
+      sky: { cls: 'ok', word: '📷 Open now', sub: `the camera sees aurora (AI ${c.sure}% sure)${said ? ` · forecast said ${said}` : ''}` },
+      line: 'The camera sees aurora right now: go out, look north, away from lights.' };
+  }
+
   // "Changed at 15:30: was GO 21:00–23:00 (5–31% cloud), now NO (85–100% cloud)" from the forecast runs of today.
   function basicChange(date, v) {
     const runs = (TLOG && TLOG[date]) || [];
@@ -2807,7 +2818,7 @@
     let tonight = `<div class="b-card"><div class="b-k">Tonight</div><div class="b-sub" style="margin-top:6px">${
       nightsOver || Date.now() > new Date(D.trip.end) ? 'The cruise nights are over. All of them are under Advanced.' : 'No forecast for tonight yet.'}</div></div>`;
     if (t && t.n) {
-      const v = basicVerdict(t.n);
+      const v = camTonight(basicVerdict(t.n));
       tonight = `<div class="b-card">
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
         ${liveLine()}
@@ -2872,6 +2883,7 @@
           <b>Low</b> = a calm field and less activity than this place needs.
           Where there is no magnetometer (further south): <b>Active</b> when Hp30 is 1.5 above the level needed here or the NOAA model shows 20%+ overhead, <b>Possible</b> when it reaches the level, <b>Low</b> below it.
           <b>Daylight</b> = still too bright to see aurora (until about 45 minutes after sunset).</p>
+        <p><b>NOW</b> (green, instead of the forecast answer): an all-sky camera within 60 km (Tromsø, Skibotn, Kiruna) sees aurora in a picture of the last 20 minutes. What the camera sees outranks the forecast; when it stops, the card goes back to the forecast. The hour strip stays the forecast.</p>
         <p><b>⚡ Strong activity</b> (green line under a cloudy answer): the activity is 3+ above what this place needs; then aurora often shows through gaps and thin cloud, so it is worth looking out even when the forecast says cloudy.</p>
         <p><b>NOAA storm watch</b>: a yellow line when NOAA's 3-day forecast expects storm-level activity (G1 or more, Kp 4.7+) in tonight's dark hours, with its cause and what this place needs. G1 is the lowest of NOAA's five storm levels; up north even quieter activity is enough, so a storm matters most further south. Tap it for the details. </p>
         <p><b>☄️ CME arriving</b>: the front of a solar eruption has reached the satellite that measures the solar wind, 1.5 million km from us; it gets here at the time shown. <i>Weak</i>: little extra aurora. <i>Strong</i>: a storm may follow, above all if Bz turns south.</p>
