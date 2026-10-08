@@ -2208,12 +2208,8 @@
         links.forEach((a) => {
           const on = a.getAttribute('href') === '#' + e.target.id;
           a.classList.toggle('active', on);
-          // the bar slides along so the highlighted tab stays in view on a phone (user, 7 Oct 2026); sideways only,
-          // the page itself does not move
-          if (on) {
-            const nav = a.parentElement, r = a.getBoundingClientRect(), nr = nav.getBoundingClientRect();
-            nav.scrollBy({ left: r.left - nr.left - (nr.width - r.width) / 2, behavior: 'smooth' });
-          }
+          // the bar slides along so the highlighted tab stays in view on a phone (user, 7 Oct 2026)
+          if (on) centerTab(a, true);
         });
       });
     }, { rootMargin: '-45% 0px -50% 0px' });
@@ -2232,6 +2228,11 @@
     document.querySelectorAll('#mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === MODE));
     if (MODE === 'basic') safe(renderBasic);
   }
+  // A tab of the bar into the middle of it, sideways only: the page itself does not move
+  function centerTab(a, smooth) {
+    const nav = a.parentElement, r = a.getBoundingClientRect(), nr = nav.getBoundingClientRect();
+    nav.scrollBy({ left: r.left - nr.left - (nr.width - r.width) / 2, behavior: smooth ? 'smooth' : 'instant' });
+  }
   // Where the reader left Advanced: back there without a target, the page returns to it, tab bar included
   // (user, 8 Oct 2026); Basic still starts at its top.
   let advPos = null;
@@ -2242,7 +2243,14 @@
     applyMode();
     const back = m === 'advanced' && !then ? advPos : null;
     window.scrollTo({ top: back ? back.y : 0, behavior: 'instant' });
-    if (back && $('#tabs')) $('#tabs').scrollLeft = back.x;
+    // the hidden tab bar loses its sideways position in Basic; once it is shown again, bring the highlighted tab back
+    // into view (set at once it only worked sometimes: the bar was not laid out yet; user, 8 Oct 2026)
+    if (back) {
+      setTimeout(() => {
+        const nav = $('#tabs'), a = nav && nav.querySelector('a.active');
+        if (a) centerTab(a, false); else if (nav) nav.scrollLeft = back.x;
+      }, 80);
+    }
     if (then) setTimeout(then, 50);
   }
   // The live jobs redraw the basic view every couple of minutes: keep what the reader opened (Detailed hourly, How is
