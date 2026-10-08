@@ -22,6 +22,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          # the branch tip when the job starts, not the commit it was queued with:
+          # a queued run would otherwise work on the data of when it was queued
+          ref: main
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

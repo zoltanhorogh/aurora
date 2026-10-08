@@ -27,6 +27,10 @@ jobs:
     # job limit, so nothing was saved and no alert went out during the biggest substorm (Masi -709 nT at 21:09).
     steps:
       - uses: actions/checkout@v5
+        with:
+          # the branch tip when the job starts, not the commit it was queued with:
+          # a queued run read an old alert state and sent the camera alert twice (7-8 Oct 2026, 19:50/19:51 and 01:00/01:01)
+          ref: main
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"

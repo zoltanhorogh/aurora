@@ -2232,11 +2232,17 @@
     document.querySelectorAll('#mode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === MODE));
     if (MODE === 'basic') safe(renderBasic);
   }
+  // Where the reader left Advanced: back there without a target, the page returns to it, tab bar included
+  // (user, 8 Oct 2026); Basic still starts at its top.
+  let advPos = null;
   function setMode(m, then) {
+    if (MODE === 'advanced' && m !== 'advanced') advPos = { y: window.scrollY, x: ($('#tabs') || {}).scrollLeft || 0 };
     MODE = m;
     try { localStorage.setItem('aurora-mode', m); } catch { /* ignore */ } // the choice is remembered on this device
     applyMode();
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    const back = m === 'advanced' && !then ? advPos : null;
+    window.scrollTo({ top: back ? back.y : 0, behavior: 'instant' });
+    if (back && $('#tabs')) $('#tabs').scrollLeft = back.x;
     if (then) setTimeout(then, 50);
   }
   // The live jobs redraw the basic view every couple of minutes: keep what the reader opened (Detailed hourly, How is
