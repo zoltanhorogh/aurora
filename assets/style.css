@@ -356,6 +356,7 @@ h3 { font-size: 16px; margin: 0 0 6px; }
 .itin-now b { color: var(--text); }
 .wxi { width: 26px; height: 26px; vertical-align: middle; }
 table.wx td, table.wx th { padding: 4px 3px; }
+table.wx tr.wxday td { padding: 9px 3px 3px; font-size: 12px; font-weight: 700; color: var(--aurora); text-align: left; }
 table.wx th small { font-weight: 400; color: var(--muted); }
 table.wx .wxi { width: 24px; height: 24px; }
 table.wx td:nth-child(2) { text-align: left; }

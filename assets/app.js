@@ -2042,14 +2042,20 @@
   const LEVEL_CLS = (lvl) => (/red/.test(lvl || '') ? 'critical' : /orange/.test(lvl || '') ? 'serious' : 'warn');
 
   function wxRows(series, lat, compact) {
+    // tables over more than one day get a day row before each new day (user, 8 Oct 2026: which day is which?)
+    const days = new Set(series.map((e) => localDay(e.t, lat)));
+    let last = null;
     return series.map((e) => {
+      const day = localDay(e.t, lat);
+      const head = days.size > 1 && day !== last ? `<tr class="wxday"><td colspan="7">${day}</td></tr>` : '';
+      last = day;
       const gCls = e.gust >= 20 ? 'wx-red' : e.gust >= 15 ? 'wx-orange' : '';
       const fCls = e.feels != null && e.feels <= 0 ? 'wx-cold' : '';
       const pCls = (e.pr || 0) >= 0.5 ? 'wx-wet' : '';
       const snow = /snow|sleet/.test(e.sym || '') ? ' <span class="wx-snow">snow/sleet</span>' : '';
       const arrow = e.dir != null ? `<span class="warr" style="transform:rotate(${Math.round(e.dir + 180)}deg)">↑</span>` : '';
       const time = `${localHm(e.t, lat)}${e.step === 6 ? '<span class="why">+6h</span>' : ''}${e.src ? '<span class="why">*</span>' : ''}`;
-      return `<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
+      return `${head}<tr><td>${time}</td><td>${WX_ICON(e.sym)}${snow}</td><td>${r1(e.T)}°</td><td class="${fCls}">${r1(e.feels)}°</td>
         <td class="${gCls}">${arrow}${kmh(e.wind)}${e.gust != null ? `<span class="why"> (${kmh(e.gust)})</span>` : ''}</td>
         <td class="${pCls}">${e.pr ? r1(e.pr) : '0'}${e.pp != null ? `${compact ? '<br>' : ' '}<span class="why">${r0(e.pp)}%</span>` : ''}</td>
         <td class="${e.uv >= 6 ? 'wx-orange' : e.uv >= 3 ? 'wx-uv' : ''}">${e.uv != null ? r0(e.uv) : '–'}</td></tr>`;
