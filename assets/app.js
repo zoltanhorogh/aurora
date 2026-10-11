@@ -2034,6 +2034,7 @@
 
   // ------------------------------------------------------------ weather in port
   let wxPort = null;
+  let wxAlertsOpen = false; // the warnings panel stays as the user left it (closed until tapped), across re-renders
   const WX_ICON = (sym) => (sym ? `<img class="wxi" src="https://cdn.jsdelivr.net/gh/metno/weathericons@main/weather/svg/${encodeURIComponent(sym)}.svg" alt="${esc(sym.replace(/_/g, ' '))}" loading="lazy">` : '');
   const r1 = (v) => (v == null ? '–' : (Math.round(v * 10) / 10).toString());
   const r0 = (v) => (v == null ? '–' : Math.round(v).toString());
@@ -2108,13 +2109,14 @@
     if (!WX || !WX.ports) { box.innerHTML = '<div class="empty">Weather data will appear after the next update.</div>'; return; }
     // Warnings
     const al = WX.alerts || [];
-    const sailing = Date.now() >= new Date(D.trip.start) && Date.now() <= new Date(D.trip.end);
-    $('#wx-alerts').innerHTML = al.length ? `<details class="panel wx-alerts" ${sailing && al.some((a) => a.places.some((p) => p !== 'Ship route')) ? 'open' : ''}>
+    $('#wx-alerts').innerHTML = al.length ? `<details class="panel wx-alerts" ${wxAlertsOpen ? 'open' : ''}>
       <summary><b>${al.length} official MET Norway warning${al.length > 1 ? 's' : ''}</b> near the ports or the route right now</summary>
       ${al.map((a) => `<div class="walert ${LEVEL_CLS(a.level)}"><b>${esc(a.event || a.title)}</b> · ${esc(a.area || '')}
         <div class="why">${a.from ? `${localDay(a.from, 65)} ${localHm(a.from, 65)}` : ''}–${a.to ? `${localDay(a.to, 65)} ${localHm(a.to, 65)}` : ''} · affects: ${esc(a.places.join(', '))}</div>
         ${a.description ? `<div class="why">${esc(a.description)}</div>` : ''}</div>`).join('')}
       <p class="hint">Before the cruise these are today's warnings along the route, useful to learn how often it happens. During the cruise they matter for the ship and port days.</p></details>` : '';
+    const wa = $('#wx-alerts details');
+    if (wa) wa.addEventListener('toggle', () => { wxAlertsOpen = wa.open; });
     // Port tabs
     if (!wxPort) {
       const upcoming = WX.ports.find((p) => new Date(p.window[1]) > Date.now());
