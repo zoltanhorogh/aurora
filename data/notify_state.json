@@ -5,8 +5,8 @@
    "rating": "FAIR"
   },
   "2026-10-14": {
-   "score": 0.132,
-   "rating": "LOW"
+   "score": 0.315,
+   "rating": "FAIR"
   },
   "2026-10-15": {
    "score": 0.102,
@@ -64,6 +64,6 @@
   "2026-10-14T11:30:00Z"
  ],
  "change_day": "2026-10-13",
- "changes_today": 1,
- "updated": "2026-10-12T22:03:37Z"
+ "changes_today": 2,
+ "updated": "2026-10-12T22:51:47Z"
 }
