@@ -5,24 +5,24 @@
    "rating": "POOR"
   },
   "2026-10-14": {
-   "score": 0.033,
-   "rating": "POOR"
+   "score": 0.121,
+   "rating": "LOW"
   },
   "2026-10-15": {
-   "score": 0.064,
+   "score": 0.074,
    "rating": "POOR"
   },
   "2026-10-16": {
-   "score": 0.207,
+   "score": 0.209,
    "rating": "LOW"
   },
   "2026-10-17": {
-   "score": 0.161,
+   "score": 0.154,
    "rating": "LOW"
   },
   "2026-10-18": {
-   "score": 0.151,
-   "rating": "LOW"
+   "score": 0.1,
+   "rating": "POOR"
   }
  },
  "digest_values": {
@@ -61,6 +61,6 @@
   "2026-10-12T00:43:00Z"
  ],
  "change_day": "2026-10-12",
- "changes_today": 1,
- "updated": "2026-10-12T06:03:18Z"
+ "changes_today": 2,
+ "updated": "2026-10-12T06:56:16Z"
 }
