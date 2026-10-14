@@ -9,11 +9,11 @@
    "rating": "POOR"
   },
   "2026-10-15": {
-   "score": 0.04,
-   "rating": "POOR"
+   "score": 0.277,
+   "rating": "FAIR"
   },
   "2026-10-16": {
-   "score": 0.121,
+   "score": 0.141,
    "rating": "LOW"
   },
   "2026-10-17": {
@@ -21,7 +21,7 @@
    "rating": "LOW"
   },
   "2026-10-18": {
-   "score": 0.076,
+   "score": 0.075,
    "rating": "POOR"
   }
  },
@@ -64,6 +64,6 @@
   "2026-10-14T11:30:00Z"
  ],
  "change_day": "2026-10-14",
- "changes_today": 1,
- "updated": "2026-10-13T22:14:20Z"
+ "changes_today": 2,
+ "updated": "2026-10-14T00:53:11Z"
 }
