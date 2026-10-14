@@ -1,27 +1,23 @@
 {
  "baseline": {
-  "2026-10-13": {
-   "score": 0.044,
-   "rating": "POOR"
-  },
   "2026-10-14": {
    "score": 0.045,
    "rating": "POOR"
   },
   "2026-10-15": {
-   "score": 0.277,
+   "score": 0.284,
    "rating": "FAIR"
   },
   "2026-10-16": {
-   "score": 0.141,
-   "rating": "LOW"
+   "score": 0.293,
+   "rating": "FAIR"
   },
   "2026-10-17": {
-   "score": 0.113,
+   "score": 0.156,
    "rating": "LOW"
   },
   "2026-10-18": {
-   "score": 0.075,
+   "score": 0.051,
    "rating": "POOR"
   }
  },
@@ -59,7 +55,7 @@
   "2026-10-14T09:04:00Z",
   "2026-10-14T11:30:00Z"
  ],
- "change_day": "2026-10-14",
- "changes_today": 2,
- "updated": "2026-10-14T06:16:13Z"
+ "change_day": "2026-10-15",
+ "changes_today": 1,
+ "updated": "2026-10-14T22:13:55Z"
 }
