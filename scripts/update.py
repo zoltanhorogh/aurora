@@ -326,7 +326,8 @@ def night_events(d, route):
     first = parse_utc(events[0]["t"]) if events else noon
     last = parse_utc(events[-1]["t"]) if events else morning
     for st in route.stops:
-        for key, verb in (("depart", "Ship departs"), ("arrive", "Ship arrives in")):
+        plane = st.get("by") == "plane"  # reached by plane (Tromsø 21-24 Oct 2026): no ship there
+        for key, verb in (("depart", "Leaving" if plane else "Ship departs"), ("arrive", "Arriving by plane in" if plane else "Ship arrives in")):
             if key in st and first <= parse_utc(st[key]) <= last:
                 t = parse_utc(st[key])
                 events.append({"t": iso(t), "local": local_hm(t), "kind": key, "label": f"{verb} {st['name']}"})
@@ -480,7 +481,9 @@ def score_night(d, route, now, kp3_map, kp27_map, daily, cmes, clim):
             stop = next(s for s in route.stops if s["name"] == a["place"] and "depart" in s)
             place = f"{a['place']} → at sea (departs {local_hm(parse_utc(stop['depart']))})"
         else:
-            place = f"At sea → {b['place']}"
+            to = next((s for s in route.stops if s["name"] == b["place"] and "arrive" in s), None)
+            place = (f"By plane → {b['place']} (arrives {local_hm(parse_utc(to['arrive']))})" if to and to.get("by") == "plane"
+                     else f"At sea → {b['place']}")
     return {
         "date": d.isoformat(),
         "label": d.strftime("%a %d %b"),

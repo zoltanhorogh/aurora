@@ -154,7 +154,8 @@ class Route:
                                       {"pts": pts, "cum": cum, "from": st, "to": nxt}))
         self.segments.sort(key=lambda s: s[0])
         self.start = parse_utc(self.stops[0]["depart"])
-        self.end = parse_utc(self.stops[-1]["arrive"])
+        # the trip ends when the last stop is left, if it has a departure (Tromsø by plane until the flight home)
+        self.end = parse_utc(self.stops[-1].get("depart") or self.stops[-1]["arrive"])
 
     def at(self, t):
         """Return dict(lat, lon, state, place, light) for time t (UTC datetime)."""
@@ -177,8 +178,9 @@ class Route:
                         f = 0 if seg == 0 else (target - cum[j]) / seg
                         lat = pts[j][0] + f * (pts[j + 1][0] - pts[j][0])
                         lon = pts[j][1] + f * (pts[j + 1][1] - pts[j][1])
+                        how = "Flight" if p["to"].get("by") == "plane" else "At sea"
                         return {"lat": round(lat, 3), "lon": round(lon, 3), "state": "sea",
-                                "place": f"At sea ({p['from']['name']} → {p['to']['name']})", "light": 1.0}
+                                "place": f"{how} ({p['from']['name']} → {p['to']['name']})", "light": 1.0}
                 last = pts[-1]
                 return {"lat": last[0], "lon": last[1], "state": "sea", "place": "At sea", "light": 1.0}
         s = self.stops[-1]

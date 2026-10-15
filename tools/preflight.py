@@ -438,7 +438,10 @@ def check_mag_alert(tmp, base_env, problems):
     shutil.copytree(ROOT / "data", data)
     shutil.copy2(ROOT / "tools" / "fixtures" / "mag_2026-10-01.json", data / "mag.json")
     (data / "alert_state.json").write_text("{}", encoding="utf-8")
-    shifted_config(cfg, date(2026, 10, 15), date(2026, 10, 1))  # in Tromsø on 1 Oct
+    # a whole day at the itinerary's Tromsø stop, moved to 1 Oct (it was hard-wired to 15 Oct before the reroute)
+    tos = next(s for s in json.loads((ROOT / "config" / "itinerary.json").read_text(encoding="utf-8"))["stops"] if s.get("id") == "TOS")
+    in_tos = datetime.fromisoformat(tos["arrive"].replace("Z", "+00:00")).date() + timedelta(days=1)
+    shifted_config(cfg, in_tos, date(2026, 10, 1))  # in Tromsø on 1 Oct
     env = {**base_env, "AURORA_DATA": str(data), "AURORA_CONFIG": str(cfg)}
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "alert.py"), "--dry-run", "--now", "2026-10-01T20:58:00Z"],
                        cwd=ROOT / "scripts", env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

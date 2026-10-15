@@ -18,7 +18,9 @@
   const hm = (t) => { const d = shipDate(t); return pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()); };
   const dayLabel = (s) => { const d = new Date(s + 'T12:00:00Z'); return `${DOW[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
   const shortDay = (s) => { const d = new Date(s + 'T12:00:00Z'); return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`; };
-  const shortPlace = (p) => String(p).replace(/^At sea \((.*)\)$/, 'At sea · $1');
+  const shortPlace = (p) => String(p).replace(/^(At sea|Flight) \((.*)\)$/, '$1 · $2');
+  // nights after leaving the ship (the last stop reached by plane: Tromsø 21-24 Oct 2026)
+  const onLand = (date) => { const st = D && D.trip && (D.trip.stops || []).find((x) => x.by === 'plane'); return !!st && date >= st.arrive.slice(0, 10); };
   const chip = (r) => `<span class="chip ${RATING[r][0]}">${RATING[r][1]} ${r}</span>`;
   const CONF_LEVEL = { 'Trend only': 1, Low: 2, Medium: 3, High: 4 };
   const confSig = (c, withWord) => {
@@ -2594,7 +2596,7 @@
     }
     const now = Date.now();
     const port = D.trip.stops.find((st) => st.arrive && st.depart && new Date(st.arrive) <= now && now <= new Date(st.depart));
-    if (port) return [esc(port.name), `in port until ${hm(port.depart)}`];
+    if (port) return [esc(port.name), `${port.by === 'plane' ? 'on land' : 'in port'} until ${dayLabel(port.depart.slice(0, 10))} ${hm(port.depart)}`];
     const next = D.trip.stops.find((st) => st.arrive && new Date(st.arrive) > now);
     return ['At sea', next ? `next: ${esc(next.name)}, ${dayLabel(next.arrive.slice(0, 10))} ${hm(next.arrive)}` : ''];
   }
@@ -2787,7 +2789,7 @@
   function prevNightCard(P) {
     return `<div class="b-card" id="b-last"><div class="b-k">Last night · ${dayLabel(P.date)} <span class="btag">MORNING</span> <span class="bgo" data-go="last" role="button" tabindex="0">Details ›</span></div>
       <div class="bplace">📍 ${esc(P.place)}</div>
-      <div class="bplace-s">${P.practice ? 'practice spot until the cruise starts' : 'where the ship was that night, from the published itinerary'}</div>
+      <div class="bplace-s">${P.practice ? 'practice spot until the cruise starts' : onLand(P.date) ? 'after the cruise: on land in Tromsø' : 'where the ship was that night, from the published itinerary'}</div>
       <div class="b-big"><span class="b-sym ${P.big[0]}">${{ g: '✓', y: '?', n: '✕', u: '…' }[P.big[0]]}</span><span class="b-verdict">${esc(P.big[1])} <small>${esc(P.big[2])}</small></span></div>
       <div class="bfx">${[['Aurora', P.aur], [P.skyHead, P.sky]].map(([k, f]) =>
         `<div class="bf ${f.cls}"><div class="h">${esc(k)}</div><div class="w">${esc(f.word)}</div><div class="s">${esc(f.sub)}</div></div>`).join('')}</div>
@@ -2883,7 +2885,7 @@
         <div class="b-k">Tonight · ${dayLabel(t.n.date)}</div>
         ${liveLine()}
         <div class="bplace">📍 ${esc(t.practice ? 'Tromsø' : shortPlace(t.n.place))}</div>
-        <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
+        <div class="bplace-s">${t.practice ? 'practice spot until the cruise starts' : onLand(t.n.date) ? 'after the cruise: on land in Tromsø' : "where the ship is tonight, from the published itinerary (not live GPS)"}</div>
         ${stormBasic(t.n)}
         <div class="b-big"><span class="b-dot ${v.cls}"></span><span class="b-verdict">${v.big} <small>${esc(v.small)}</small></span></div>
         <div class="bfx">${[['Aurora', v.aur], ['Sky', v.sky]].map(([k, f]) =>

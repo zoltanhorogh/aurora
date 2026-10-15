@@ -227,6 +227,8 @@ def sea_legs_forecast(it, route, shift=timedelta(0)):
     stops = it["stops"]
     legs, pts = [], []
     for a, b in zip(stops, stops[1:]):
+        if b.get("by") == "plane":  # Ålesund -> Tromsø is a flight: no waves to forecast
+            continue
         s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
         t = s.replace(minute=0, second=0) + timedelta(hours=1)
         leg_pts = []
@@ -260,6 +262,8 @@ def sea_legs_forecast(it, route, shift=timedelta(0)):
     # "Right now": next 48 h at the middle of each leg, whatever the cruise date.
     mids = []
     for a, b in zip(stops, stops[1:]):
+        if b.get("by") == "plane":  # Ålesund -> Tromsø is a flight: no waves to forecast
+            continue
         s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
         p = route.at(s + (e - s) / 2)
         mids.append((round(p["lat"], 2), round(p["lon"], 2)))
