@@ -54,6 +54,7 @@ jobs:
           git add data/last_night.json 2>/dev/null || true
           git add data/weather.json 2>/dev/null || true
           git add data/notify_state.json 2>/dev/null || true
+          git add data/kp27_archive.json 2>/dev/null || true
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "Forecast update $(date -u +'%Y-%m-%d %H:%M') UTC"
           for i in 1 2 3 4 5; do git pull --rebase -X theirs && git push && break; sleep $((RANDOM % 10 + 5)); done

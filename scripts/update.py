@@ -71,6 +71,49 @@ def fetch_27day():
     return {"issued": issued.group(1).strip() if issued else None, "days": days}
 
 
+def parse_27day(txt):
+    issued = re.search(r":Issued:\s*(.+)", txt)
+    days = []
+    for m in re.finditer(r"^(\d{4})\s+(\w{3})\s+(\d{2})\s+(\d+)\s+(\d+)\s+(\d+)\s*$", txt, re.M):
+        d = datetime(int(m.group(1)), MONTHS[m.group(2)], int(m.group(3))).date()
+        days.append({"date": d.isoformat(), "kp": int(m.group(6))})
+    return {"issued": issued.group(1).strip() if issued else None, "days": days}
+
+
+def kp27_said(kp27, now):
+    """What NOAA's 27-day outlook had said for each past day: the last weekly issue made before that day (user,
+    15 Oct 2026: compare it with what was measured). The live file only has the newest issue, so every issue is kept
+    in data/kp27_archive.json (rebuilt back to 21 Sep 2026 from this repo's history); older ones come from SWPC's
+    quarterly archive when it answers (best effort)."""
+    path = DATA / "kp27_archive.json"
+    arch = {i["issued"]: i["days"] for i in (load_json(path, {}) or {}).get("issues", [])}
+    if kp27.get("issued") and kp27.get("days"):
+        arch[kp27["issued"]] = [{"date": d["date"], "kp": d["kp"]} for d in kp27["days"]]
+    if not any(days and days[0]["date"] < (now - timedelta(days=45)).date().isoformat() for days in arch.values()):
+        for back in (0, 1):
+            q, y = (now.month - 1) // 3 + 1 - back, now.year
+            if q < 1:
+                q, y = q + 4, y - 1
+            try:
+                txt = http_get(f"https://ftp.swpc.noaa.gov/pub/forecasts/27DO/{y}Q{q}_27DO.txt", timeout=15)
+            except Exception as e:  # no archive: the chart starts with the issues kept here
+                print("27-day archive:", str(e)[:120])
+                continue
+            for block in re.split(r"(?=:Issued:)", txt):
+                p = parse_27day(block)
+                if p["issued"] and p["days"]:
+                    arch.setdefault(p["issued"], p["days"])
+    issues = sorted(arch.items(), key=lambda kv: kv[1][0]["date"] if kv[1] else "")
+    save_json(path, {"issues": [{"issued": k, "days": v} for k, v in issues]})
+    said = {}
+    for _, days in issues:  # later issues overwrite earlier ones; an issue counts only for the days after it
+        for d in days:
+            if d["date"] > days[0]["date"]:
+                said[d["date"]] = d["kp"]
+    today = now.date().isoformat()
+    return [{"date": k, "kp": v} for k, v in sorted(said.items()) if k <= today]
+
+
 def _clean(txt):
     txt = re.sub(r"<[^>]+>", "", txt)
     return re.sub(r"\s+", " ", txt).strip()
@@ -873,6 +916,7 @@ def main():
         if r["kind"] == "estimated" and parse_utc(r["t"]) > now:
             r["kind"] = "predicted"
     kp27 = fetch_27day() or {"issued": None, "days": []}
+    said27 = kp27_said(kp27, now)
     weekly = fetch_weekly() or {}
     three = fetch_3day_text() or {}
     daily = fetch_daily_indices() or {}
@@ -936,6 +980,7 @@ def main():
         "space_weather": {
             "kp_3day": kp3,
             "kp_27day": kp27,
+            "kp27_said": said27,
             "weekly": weekly,
             "three_day": three,
             # NOAA's daily file for the last 30 days, GFZ's measured Kp before that

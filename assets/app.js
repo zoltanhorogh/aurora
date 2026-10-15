@@ -939,7 +939,7 @@
     if (!sw.kp_27day.days.length) { el.innerHTML = '<div class="empty">27-day outlook unavailable.</div>'; return; }
     el.innerHTML = `
       <h3>27-day Kp outlook</h3>
-      <div class="legend"><span><i style="background:#3987e5"></i>NOAA outlook (daily max Kp)</span><span><i style="background:#d95926"></i>Observed (measured, daily max)</span><span><i class="dotm" style="border:2px solid #199e70;background:none"></i>What happened 27 days earlier</span></div>
+      <div class="legend"><span><i style="background:#3987e5"></i>NOAA outlook (daily max Kp)</span><span><i style="background:#d95926"></i>Observed (measured, daily max)</span><span><i style="background:none;border:1.5px solid #3987e5"></i>What NOAA had said (the week before)</span><span><i class="dotm" style="border:2px solid #199e70;background:none"></i>What happened 27 days earlier</span></div>
       <div class="chart" id="kp27-chart"></div>
       <div class="hint">Issued ${esc(sw.kp_27day.issued || '–')} (new issue every Monday). Left of the outlook: two solar rotations of measured Kp. The Sun turns once in about 27 days, so the dashed vertical lines are one rotation apart: what stood at the same place in the rotation before often comes back. The purple band marks the nights in Tromsø (${shortDay(KEY_NIGHTS[0])}–${shortDay(KEY_NIGHTS[KEY_NIGHTS.length - 1])}).</div>`;
     drawKp27();
@@ -950,6 +950,7 @@
     const days = sw.kp_27day.days;
     const cont = $('#kp27-chart');
     const obs = Object.fromEntries(sw.observed_daily.map((o) => [o.date, o.kp_max]));
+    const said = Object.fromEntries((sw.kp27_said || []).map((o) => [o.date, o.kp]));
     const outFirst = new Date(days[0].date + 'T00:00:00Z');
     const first = new Date(outFirst.getTime() - 54 * 864e5); // two solar rotations of the past before the outlook
     const last = new Date(Math.max(new Date(days[days.length - 1].date + 'T00:00:00Z'), new Date(shipDate(D.trip.end).toISOString().slice(0, 10) + 'T00:00:00Z')));
@@ -980,6 +981,11 @@
     all.forEach((d, i) => {
       const cx = ml + i * bw + bw / 2, w = Math.max(2, bw * 0.55);
       if (out[d] != null) g += `<path d="${roundTopBar(cx - w / 2, y(out[d]), w, y(0) - y(out[d]), 3)}" fill="#3987e5"/>`;
+      // what NOAA's outlook had said for a past day: an outline behind the measured bar
+      if (out[d] == null && said[d] != null) {
+        const sw2 = Math.max(4, bw * 0.85);
+        g += `<rect x="${cx - sw2 / 2}" y="${y(said[d])}" width="${sw2}" height="${y(0) - y(said[d])}" rx="2" fill="none" stroke="#3987e5" stroke-width="1.2"/>`;
+      }
       // measured: a bar where there is no outlook (the past), a dot on top of the outlook bar
       if (obs[d] != null && d <= today) g += out[d] == null
         ? `<path d="${roundTopBar(cx - w / 2, y(obs[d]), w, y(0) - y(obs[d]), 2)}" fill="#d95926"/>`
@@ -997,6 +1003,7 @@
       const d = all[i];
       return `<b>${dayLabel(d)}</b>
         <div class="row"><span>NOAA outlook</span><span>${out[d] ?? '–'}</span></div>
+        ${out[d] == null ? `<div class="row"><span>NOAA had said</span><span>${said[d] ?? '–'}</span></div>` : ''}
         <div class="row"><span>${d === today ? 'Observed so far today' : 'Observed'}</span><span>${obs[d] != null && d <= today ? obs[d].toFixed(1) : '–'}</span></div>
         <div class="row"><span>27 days earlier</span><span>${rec(d) != null ? rec(d).toFixed(1) : '–'}</span></div>`;
     }, (i) => hlBand(hl, bands, i, mt, ph));
