@@ -81,6 +81,48 @@ def main():
     state = load_json(DATA / "notify_state.json", {}) or {}
     changed = False
 
+    # ---- storms on the way: their own messages, outside the daily change limit (user, 15 Oct 2026). Before, a modelled
+    # CME was only one line inside "Aurora outlook changed" and fell away after two changes a day.
+    trip_end = parse_utc(latest["trip"]["end"])
+    sent = state.get("cmes_sent", [])
+    for c in latest["space_weather"].get("cmes", []):
+        arr = parse_utc(c["arrival"])
+        # the next model run moves the arrival a little: within 12 h it is the same CME
+        if not now < arr <= trip_end or any(abs(parse_utc(s) - arr) < timedelta(hours=12) for s in sent):
+            continue
+        when = (arr + timedelta(hours=LOCAL_OFFSET)).strftime("%a %d %b %H:%M")
+        kp = (f"Kp {c['kp_min']:.0f}–{c['kp_max']:.0f}" if c.get("kp_min") is not None and round(c["kp_min"]) != round(c["kp_max"])
+              else f"Kp {c['kp_max']:.0f}" if c.get("kp_max") is not None else "Kp not given")
+        send("☄️ CME on the way",
+             f"NASA's model: a solar eruption reaches Earth about {when} ship time (±7 h), {kp}"
+             f"{', a glancing blow' if c.get('glancing') else ''}. Tromsø needs only Kp 0.5, southern Norway about Kp 5. "
+             "Another message comes when it reaches the solar wind satellite, 40–85 minutes before Earth.",
+             priority=4, tags=["comet"], click=DASHBOARD + "#storm", dry=args.dry_run)
+        sent.append(c["arrival"])
+        state["cmes_sent"] = sent
+        changed = True
+    # NOAA's 3-day forecast with a G1+ storm (Kp >= 4.67) in a 3-hour block still to come: once per night of the storm
+    # (the evening's date: a storm from 23:00 to 02:00 is one message, not two)
+    levels = ((8.67, "G5"), (7.67, "G4"), (6.67, "G3"), (5.67, "G2"), (4.67, "G1"))
+    storm = {}
+    for r in latest["space_weather"].get("kp_3day", []):
+        t = parse_utc(r["t"])
+        if r.get("kind") == "predicted" and r["kp"] >= 4.67 and now < t <= trip_end:
+            day = (t + timedelta(hours=LOCAL_OFFSET - 12)).date().isoformat()
+            storm.setdefault(day, []).append((t, r["kp"]))
+    for day, blocks in sorted(storm.items()):
+        if day in state.get("storm_days_sent", []):
+            continue
+        top = max(k for _, k in blocks)
+        g = next(name for lim, name in levels if top >= lim)
+        t0 = min(t for t, k in blocks if k == top) + timedelta(hours=LOCAL_OFFSET)
+        send(f"⚠️ NOAA storm watch: {g}",
+             f"NOAA expects a {g} storm the night of {day_label(day)}, Kp up to {top:.1f}, strongest from about {t0.strftime('%H:%M')} ship time "
+             f"(3-hour block). Tromsø needs only Kp 0.5, southern Norway about Kp 5. Check the clouds that evening.",
+             priority=4, tags=["warning"], click=DASHBOARD + "#storm", dry=args.dry_run)
+        state["storm_days_sent"] = state.get("storm_days_sent", []) + [day]
+        changed = True
+
     # ---- change tracking
     if not state.get("baseline"):
         send("📊 Aurora change tracking is on",
@@ -98,7 +140,7 @@ def main():
         trip_end = parse_utc(latest["trip"]["end"])
         new_cmes = [c for c in latest["space_weather"].get("cmes", [])
                     if trip_start <= parse_utc(c["arrival"]) <= trip_end and parse_utc(c["arrival"]) > now  # still to come
-                    and c["arrival"] not in state.get("cmes_sent", [])]
+                    and not any(abs(parse_utc(s) - parse_utc(c["arrival"])) < timedelta(hours=12) for s in state.get("cmes_sent", []))]
         if state.get("change_day") != today:
             state["change_day"], state["changes_today"] = today, 0
             changed = True
