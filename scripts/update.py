@@ -116,6 +116,21 @@ def fetch_daily_indices():
     return out
 
 
+@source("gfz_kp")
+def fetch_kp_daily(now, days=60):
+    """GFZ Potsdam's measured Kp, daily maximum, for the last `days` days: the 27-day chart shows two solar rotations
+    of the past next to NOAA's outlook, so a repeating pattern can be seen (user, 15 Oct 2026). NOAA's own daily file
+    only goes back 30 days."""
+    js = http_get_json("https://kp.gfz-potsdam.de/app/json/"
+                       f"?start={iso(now - timedelta(days=days))}&end={iso(now)}&index=Kp")
+    out = {}
+    for t, v in zip(js.get("datetime", []), js.get("Kp", [])):
+        if v is not None:
+            d = t[:10]
+            out[d] = max(out.get(d, 0.0), float(v))
+    return out
+
+
 @source("gfz_hp30")
 def fetch_hp30_since(start, now):
     return [[iso(t), v] for t, v in fetch_hp30(start, now)]
@@ -861,6 +876,7 @@ def main():
     weekly = fetch_weekly() or {}
     three = fetch_3day_text() or {}
     daily = fetch_daily_indices() or {}
+    kp_past = fetch_kp_daily(now) or {}
     cmes = fetch_cmes(now) or []
 
     kp3_map = {r["t"]: r for r in kp3}
@@ -922,7 +938,8 @@ def main():
             "kp_27day": kp27,
             "weekly": weekly,
             "three_day": three,
-            "observed_daily": [{"date": k, "kp_max": v["max"]} for k, v in sorted(daily.items())],
+            # NOAA's daily file for the last 30 days, GFZ's measured Kp before that
+            "observed_daily": [{"date": k, "kp_max": v} for k, v in sorted({**kp_past, **{k: d["max"] for k, d in daily.items()}}.items())],
             "recurrence": recurrence,
             "cmes": cmes,
             "hp30": hp30,

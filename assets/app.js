@@ -924,8 +924,9 @@
   // ------------------------------------------------------------ Kp charts
   function kpRefLines(y, x0, x1) {
     let g = '';
-    const tos = kpNeedAt(69.65, 18.96), alta = kpNeedAt(69.98, 23.25); // the same numbers as "needed here" everywhere
-    for (const [v, lab] of [[tos, `needed: Tromsø ≈${tos.toFixed(1)}, Alta ≈${alta.toFixed(1)}`], [3, 'Trondheim/Ålesund ≈3'], [5, 'G1 storm']]) {
+    // Tromsø only since the reroute (user, 15 Oct 2026): the southern ports need a storm anyway
+    const tos = kpNeedAt(69.65, 18.96); // the same number as "needed here" everywhere
+    for (const [v, lab] of [[tos, `needed in Tromsø ≈${tos.toFixed(1)}`], [5, 'G1 storm']]) {
       g += `<line x1="${x0}" x2="${x1}" y1="${y(v)}" y2="${y(v)}" stroke="#777" stroke-dasharray="3 4"/>`;
       g += `<text class="ref" x="${x1 - 2}" y="${y(v) - 4}" text-anchor="end">${lab}</text>`;
     }
@@ -938,9 +939,9 @@
     if (!sw.kp_27day.days.length) { el.innerHTML = '<div class="empty">27-day outlook unavailable.</div>'; return; }
     el.innerHTML = `
       <h3>27-day Kp outlook</h3>
-      <div class="legend"><span><i style="background:#3987e5"></i>NOAA outlook (daily max Kp)</span><span><i class="dotm" style="background:#d95926"></i>Observed</span><span><i class="dotm" style="border:2px solid #199e70;background:none"></i>What happened 27 days earlier</span></div>
+      <div class="legend"><span><i style="background:#3987e5"></i>NOAA outlook (daily max Kp)</span><span><i style="background:#d95926"></i>Observed (measured, daily max)</span><span><i class="dotm" style="border:2px solid #199e70;background:none"></i>What happened 27 days earlier</span></div>
       <div class="chart" id="kp27-chart"></div>
-      <div class="hint">Issued ${esc(sw.kp_27day.issued || '–')} (new issue every Monday). The purple band marks the Arctic nights (${shortDay(KEY_NIGHTS[0])}–${shortDay(KEY_NIGHTS[KEY_NIGHTS.length - 1])}).</div>`;
+      <div class="hint">Issued ${esc(sw.kp_27day.issued || '–')} (new issue every Monday). Left of the outlook: two solar rotations of measured Kp. The Sun turns once in about 27 days, so the dashed vertical lines are one rotation apart: what stood at the same place in the rotation before often comes back. The purple band marks the nights in Tromsø (${shortDay(KEY_NIGHTS[0])}–${shortDay(KEY_NIGHTS[KEY_NIGHTS.length - 1])}).</div>`;
     drawKp27();
   }
 
@@ -949,7 +950,8 @@
     const days = sw.kp_27day.days;
     const cont = $('#kp27-chart');
     const obs = Object.fromEntries(sw.observed_daily.map((o) => [o.date, o.kp_max]));
-    const first = new Date(days[0].date + 'T00:00:00Z');
+    const outFirst = new Date(days[0].date + 'T00:00:00Z');
+    const first = new Date(outFirst.getTime() - 54 * 864e5); // two solar rotations of the past before the outlook
     const last = new Date(Math.max(new Date(days[days.length - 1].date + 'T00:00:00Z'), new Date(shipDate(D.trip.end).toISOString().slice(0, 10) + 'T00:00:00Z')));
     const all = [];
     for (let t = first.getTime(); t <= last.getTime(); t += 864e5) all.push(new Date(t).toISOString().slice(0, 10));
@@ -969,14 +971,23 @@
     let g = band(D.nights[0].date, D.nights[D.nights.length - 1].date, '#1d1f24', 'Cruise') + band(KEY_NIGHTS[0], KEY_NIGHTS[KEY_NIGHTS.length - 1], '#2a2342', '');
     g += gridY(y, ml, ml + pw, [0, 1, 2, 3, 4, 5, 6, 7], (v) => v);
     g += '<g class="hl"></g>';
+    // one solar rotation (27 days) apart, counted from the outlook's first day
+    for (let k = -2; k <= 1; k++) {
+      const i = all.indexOf(new Date(outFirst.getTime() + k * 27 * 864e5).toISOString().slice(0, 10));
+      if (i >= 0) g += `<line x1="${ml + i * bw}" x2="${ml + i * bw}" y1="${mt}" y2="${mt + ph}" stroke="#898781" stroke-dasharray="2 4"/>`;
+    }
+    let lastLab = -1e9;
     all.forEach((d, i) => {
-      const cx = ml + i * bw + bw / 2, w = Math.max(3, bw * 0.55);
+      const cx = ml + i * bw + bw / 2, w = Math.max(2, bw * 0.55);
       if (out[d] != null) g += `<path d="${roundTopBar(cx - w / 2, y(out[d]), w, y(0) - y(out[d]), 3)}" fill="#3987e5"/>`;
-      if (obs[d] != null && d <= today) g += `<circle cx="${cx}" cy="${y(obs[d])}" r="4" fill="#d95926" stroke="#16171a" stroke-width="2"/>`;
+      // measured: a bar where there is no outlook (the past), a dot on top of the outlook bar
+      if (obs[d] != null && d <= today) g += out[d] == null
+        ? `<path d="${roundTopBar(cx - w / 2, y(obs[d]), w, y(0) - y(obs[d]), 2)}" fill="#d95926"/>`
+        : `<circle cx="${cx}" cy="${y(obs[d])}" r="4" fill="#d95926" stroke="#16171a" stroke-width="2"/>`;
       const r = rec(d);
       if (r != null && d > today) g += `<circle cx="${cx}" cy="${y(r)}" r="3.5" fill="none" stroke="#199e70" stroke-width="2"/>`;
       const dd = new Date(d + 'T00:00:00Z');
-      if (dd.getUTCDay() === 1) g += `<text x="${cx}" y="${H - 8}" text-anchor="middle">${dd.getUTCDate()} ${MON[dd.getUTCMonth()]}</text>`;
+      if (dd.getUTCDay() === 1 && cx - lastLab > 44) { g += `<text x="${cx}" y="${H - 8}" text-anchor="middle">${dd.getUTCDate()} ${MON[dd.getUTCMonth()]}</text>`; lastLab = cx; }
     });
     g += kpRefLines(y, ml, ml + pw);
     cont.innerHTML = svgTag(W, H, '27-day Kp outlook', g);
