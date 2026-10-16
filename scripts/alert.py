@@ -52,6 +52,12 @@ MAG_COOLDOWN_MIN = 30    # on board a new substorm may alert again after 30 min 
 CLOUDY_REPEAT_MIN = 120  # the "cloudy, look for gaps" message again after 2 h when a new substorm shows ...
 CLOUDY_REPEAT_STRONG_MIN = 60  # ... and after 1 h while it is strong: on 3-4 and 4-5 Oct 2026 the cameras saw aurora
                                # through gaps for hours under a forecast of 99-100% cloud
+CAMERA_BELOW = 3.0       # "try a camera": Hp30 up to 3 below the naked-eye level (16 Oct 2026: a green arc on a phone
+CAMERA_FLOOR = 2.0       # photo off Lillesand at Hp30 3.0, Kp 5.6 needed there), never below Hp30 2
+CAMERA_REQ_MIN = 3.0     # only where Kp 3+ is needed (south of the oval); near Tromsø the normal alert comes at Kp ~2
+CAMERA_REPEAT_MIN = 60   # again after an hour while it lasts, sooner when Hp30 rose by CAMERA_RISE
+CAMERA_RISE = 1.0
+CAMERA_MAX_PER_NIGHT = 6
 MAG_NEAR_KM = 300
 TEST_MAX_PER_NIGHT = 2
 TEST_MAX_PER_NIGHT_STRONG = 5  # strong activity: more test alerts (4-5 Oct 2026: aurora at 23 and 02-05 h went unannounced)
@@ -340,6 +346,11 @@ def judge(lv, req):
     return activity_ok, strong
 
 
+def camera_level(lv, req):
+    """Activity a phone camera catches low in the north although the eye does not (only south of the oval)."""
+    return req >= CAMERA_REQ_MIN and lv.get("hp30", 0) >= max(CAMERA_FLOOR, req - CAMERA_BELOW)
+
+
 def mag_event(lat, lon, now):
     """A substorm at the FMI magnetometers within MAG_NEAR_KM in the last MAG_WINDOW_MIN minutes (data/mag.json,
     written just before by mag_log.py: 1-minute values against each station's quiet level). Same rule as the page:
@@ -611,6 +622,23 @@ def main():
                 state["cloudy"] = {"night": night, "level": "strong" if strong else "watch", "at": iso(now)}
                 if m:
                     state["mag_at"] = m["at"]
+                changed = True
+        elif sky_ok and camera_level(lv, req):
+            # Too faint for the eye, but a phone's night mode catches it low in the north (user, 16 Oct 2026: a normal
+            # alert, repeated while it lasts).
+            night = night_key(now)
+            c = state.get("camera") or {}
+            if c.get("night") != night:
+                c = {"night": night, "count": 0}
+            hp30 = lv.get("hp30", 0)
+            due = (not c.get("at") or now - parse_utc(c["at"]) >= timedelta(minutes=CAMERA_REPEAT_MIN)
+                   or hp30 >= c.get("hp30", 0) + CAMERA_RISE)
+            if due and c["count"] < CAMERA_MAX_PER_NIGHT:
+                send("📷 Faint aurora — try a camera",
+                     f"{pos['place']}. Low on the northern horizon: too faint for the eye, a night-mode photo "
+                     f"(3-10 s, phone held still) may show green. Look north, away from ship lights. {fmt_live(lv)}",
+                     priority=4, tags=["camera"], dry=args.dry_run, click=tonight_link(now))
+                state["camera"] = {**c, "at": iso(now), "hp30": hp30, "count": c["count"] + 1}
                 changed = True
 
     if changed and not args.dry_run:
