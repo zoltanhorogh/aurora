@@ -221,6 +221,69 @@ def comfort(h, period=None):
     return COMFORT[level]
 
 
+def leg_mids(stops, route):
+    """The middle of each sea leg (planned position halfway in time), flights left out."""
+    mids = []
+    for a, b in zip(stops, stops[1:]):
+        if b.get("by") == "plane":  # Ålesund -> Tromsø is a flight: no waves to forecast
+            continue
+        s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
+        p = route.at(s + (e - s) / 2)
+        mids.append((round(p["lat"], 2), round(p["lon"], 2)))
+    return mids
+
+
+def sea_now(mids):
+    """Waves and wind every 3 h for the next 48 h at each (lat, lon), whatever the cruise date (Open-Meteo)."""
+    mlats = ",".join(str(m[0]) for m in mids)
+    mlons = ",".join(str(m[1]) for m in mids)
+    nm = http_get_json("https://marine-api.open-meteo.com/v1/marine"
+                       f"?latitude={mlats}&longitude={mlons}&hourly=wave_height,wave_period&forecast_days=3&timezone=GMT")
+    nw = http_get_json("https://api.open-meteo.com/v1/forecast"
+                       f"?latitude={mlats}&longitude={mlons}&hourly=wind_speed_10m,wind_gusts_10m&wind_speed_unit=ms"
+                       "&forecast_days=3&timezone=GMT")
+    nm = nm if isinstance(nm, list) else [nm]
+    nw = nw if isinstance(nw, list) else [nw]
+    now = utcnow()
+    out = []
+    for (lat, lon), m, w in zip(mids, nm, nw):
+        rows = []
+        for i, t in enumerate(m["hourly"]["time"]):
+            tt = parse_utc(t + ":00Z")
+            if tt < now - timedelta(hours=1) or tt > now + timedelta(hours=48) or tt.hour % 3:
+                continue
+            wi = w["hourly"]["time"].index(t) if t in w["hourly"]["time"] else None
+            wave, period = m["hourly"]["wave_height"][i], m["hourly"]["wave_period"][i]
+            rows.append({"t": iso(tt), "lat": lat, "wave": wave, "period": period,
+                         "wind": w["hourly"]["wind_speed_10m"][wi] if wi is not None else None,
+                         "gust": w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None,
+                         "comfort": comfort(wave, period)})
+        feels = [COMFORT.index(r["comfort"]) for r in rows if r["comfort"]]
+        waves = [r["wave"] for r in rows if r["wave"] is not None]
+        out.append({"lat": lat, "lon": lon, "series": rows, "wave_max": max(waves) if waves else None,
+                    "comfort": COMFORT[max(feels)] if feels else None})
+    return out
+
+
+def original_sea_now(it):
+    """The sea right now on the legs of the original route that the reroute dropped (user, 17 Oct 2026: Trondheim →
+    Tromsø → Alta → Molde, "what is there at this moment"; no past data, no cruise dates)."""
+    orig = load_json(CONFIG / "itinerary_original.json", None)
+    if not orig:
+        return []
+    now_legs = {(a["id"], b["id"]) for a, b in zip(it["stops"], it["stops"][1:])}
+    ostops, oroute = orig["stops"], Route(orig)
+    pairs = [(a, b) for a, b in zip(ostops, ostops[1:]) if b.get("by") != "plane"]
+    # only the dropped legs (Southampton → Trondheim and Molde → Ålesund are sailed anyway; Ålesund → Southampton
+    # is not part of the trip any more)
+    keep = [i for i, (a, b) in enumerate(pairs) if (a["id"], b["id"]) not in now_legs and b["id"] != "SOU2"]
+    if not keep:
+        return []
+    mids = leg_mids(ostops, oroute)
+    nows = sea_now([mids[i] for i in keep])
+    return [{"label": f"{pairs[i][0]['name']} → {pairs[i][1]['name']}", "now": n} for i, n in zip(keep, nows)]
+
+
 def sea_legs_forecast(it, route, shift=timedelta(0)):
     """Waves, swell and wind every 3 h at the ship's planned position on each sea leg (Open-Meteo marine).
     `shift` is for testing only (moves the cruise dates so today's forecast covers them)."""
@@ -260,39 +323,8 @@ def sea_legs_forecast(it, route, shift=timedelta(0)):
         p["gust"] = w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None
         p["comfort"] = comfort(p["wave"], p["period"])
     # "Right now": next 48 h at the middle of each leg, whatever the cruise date.
-    mids = []
-    for a, b in zip(stops, stops[1:]):
-        if b.get("by") == "plane":  # Ålesund -> Tromsø is a flight: no waves to forecast
-            continue
-        s, e = parse_utc(a["depart"]), parse_utc(b["arrive"])
-        p = route.at(s + (e - s) / 2)
-        mids.append((round(p["lat"], 2), round(p["lon"], 2)))
-    mlats = ",".join(str(m[0]) for m in mids)
-    mlons = ",".join(str(m[1]) for m in mids)
-    nm = http_get_json("https://marine-api.open-meteo.com/v1/marine"
-                       f"?latitude={mlats}&longitude={mlons}&hourly=wave_height,wave_period&forecast_days=3&timezone=GMT")
-    nw = http_get_json("https://api.open-meteo.com/v1/forecast"
-                       f"?latitude={mlats}&longitude={mlons}&hourly=wind_speed_10m,wind_gusts_10m&wind_speed_unit=ms"
-                       "&forecast_days=3&timezone=GMT")
-    nm = nm if isinstance(nm, list) else [nm]
-    nw = nw if isinstance(nw, list) else [nw]
-    now = utcnow()
-    for leg, (lat, lon), m, w in zip(legs, mids, nm, nw):
-        rows = []
-        for i, t in enumerate(m["hourly"]["time"]):
-            tt = parse_utc(t + ":00Z")
-            if tt < now - timedelta(hours=1) or tt > now + timedelta(hours=48) or tt.hour % 3:
-                continue
-            wi = w["hourly"]["time"].index(t) if t in w["hourly"]["time"] else None
-            wave, period = m["hourly"]["wave_height"][i], m["hourly"]["wave_period"][i]
-            rows.append({"t": iso(tt), "lat": lat, "wave": wave, "period": period,
-                         "wind": w["hourly"]["wind_speed_10m"][wi] if wi is not None else None,
-                         "gust": w["hourly"]["wind_gusts_10m"][wi] if wi is not None else None,
-                         "comfort": comfort(wave, period)})
-        feels = [COMFORT.index(r["comfort"]) for r in rows if r["comfort"]]
-        waves = [r["wave"] for r in rows if r["wave"] is not None]
-        leg["now"] = {"lat": lat, "lon": lon, "series": rows, "wave_max": max(waves) if waves else None,
-                      "comfort": COMFORT[max(feels)] if feels else None}
+    for leg, n in zip(legs, sea_now(leg_mids(stops, route))):
+        leg["now"] = n
 
     climate = {c["label"]: c for c in (load_json(DATA / "sea_climate.json", {}) or {}).get("legs", [])}
     for leg in legs:
@@ -465,8 +497,10 @@ def main():
     warn = safe("met_alerts", alerts, points, default=[])
 
     sea = safe("open_meteo_marine", sea_legs_forecast, it, route, shift, default=[])
+    sea_orig = safe("open_meteo_marine_original", original_sea_now, it, default=[])
     here = safe("met_here", here_forecast, route, now, cruise_day_from(it), default=None)
-    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sea_legs": sea, "here": here, "sources": status,
+    save_json(DATA / "weather.json", {"generated": iso(now), "ports": ports_out, "alerts": warn, "sea_legs": sea,
+                                      "sea_original": sea_orig, "here": here, "sources": status,
                                       "test_shift_days": args.shift_days or None}, compact=True)
     print("weather done", iso(now), status)
     for p in ports_out:

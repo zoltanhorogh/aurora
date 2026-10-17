@@ -2094,6 +2094,12 @@
   function seaView() {
     const legs = WX.sea_legs || [];
     const dayHm = (t, lat) => { const d = new Date(new Date(t).getTime() + tzOff(lat) * 3600e3); return `${DOW[d.getUTCDay()]} ${pad(d.getUTCHours())}:00`; };
+    // "Right now": the next 48 hours at the middle of a leg, folded (`title` names the leg when it stands alone)
+    const nowPart = (n, title) => (n && n.series && n.series.length ? `<details class="wx-now"><summary><b>${title || 'Right now mid-route'}</b> <span class="why">(${r1(n.lat)}°N ${r1(n.lon)}°E)</span>: ${title ? 'right now, ' : ''}next 48 hours · waves up to ${r1(n.wave_max)} m · ${cmf(n.comfort)}</summary>
+          <div class="tbl-wrap"><table class="wx"><tr><th>Time</th><th>Waves</th><th>Period</th><th>Wind</th><th>Feel</th></tr>
+          ${n.series.map((p) => `<tr><td>${dayHm(p.t, p.lat)}</td><td>${r1(p.wave)} m</td><td>${r0(p.period)} s</td>
+            <td class="${p.gust >= 20 ? 'wx-red' : p.gust >= 15 ? 'wx-orange' : ''}">${kmh(p.wind)}<span class="why"> (${kmh(p.gust)})</span></td><td>${cmf(p.comfort)}</td></tr>`).join('')}</table></div>
+          <div class="why">${title ? 'The sea there now (mid-leg of the original route)' : 'The sea there now, not on your crossing date'} · every 3 hours</div></details>` : '');
     const blocks = legs.map((leg) => {
       const pts = leg.points.filter((p) => p.wave != null);
       const c = leg.climate;
@@ -2110,17 +2116,16 @@
         : (c ? `<div class="farbox"><div class="fb"><div class="k">Typical October on this leg (${esc(String(2011))}–2025)</div><div class="v">${r1(c.wave_mean)} m</div><div class="s">average wave height · 1 in 10 hours above ${r1(c.wave_p90)} m</div></div>
             <div class="fb"><div class="k">Rough or worse</div><div class="v">${Math.round(c.share_over_2_5 * 100)}% of hours</div><div class="s">waves over 2.5 m · over 4 m: ${Math.round(c.share_over_4 * 100)}%</div></div></div>
             <div class="why" style="margin-top:6px">The wave forecast reaches about 10 days ahead; after that this switches to an hour-by-hour table.</div>` : '');
-      const n = leg.now;
-      const nowPart = n && n.series && n.series.length ? `<details class="wx-now"><summary><b>Right now mid-route</b> <span class="why">(${r1(n.lat)}°N ${r1(n.lon)}°E)</span>: next 48 hours · waves up to ${r1(n.wave_max)} m · ${cmf(n.comfort)}</summary>
-          <div class="tbl-wrap"><table class="wx"><tr><th>Time</th><th>Waves</th><th>Period</th><th>Wind</th><th>Feel</th></tr>
-          ${n.series.map((p) => `<tr><td>${dayHm(p.t, p.lat)}</td><td>${r1(p.wave)} m</td><td>${r0(p.period)} s</td>
-            <td class="${p.gust >= 20 ? 'wx-red' : p.gust >= 15 ? 'wx-orange' : ''}">${kmh(p.wind)}<span class="why"> (${kmh(p.gust)})</span></td><td>${cmf(p.comfort)}</td></tr>`).join('')}</table></div>
-          <div class="why">The sea there now, not on your crossing date · every 3 hours</div></details>` : '';
-      return `<details class="spot" ${pts.length ? 'open' : ''}><summary><b>${esc(leg.label)}</b> <span class="why">${localDay(leg.start, lat)} – ${localDay(leg.end, lat)}</span><br>${head}</summary>${body}${nowPart}</details>`;
+      return `<details class="spot" ${pts.length ? 'open' : ''}><summary><b>${esc(leg.label)}</b> <span class="why">${localDay(leg.start, lat)} – ${localDay(leg.end, lat)}</span><br>${head}</summary>${body}${nowPart(leg.now)}</details>`;
     }).join('');
+    // The legs the reroute dropped (Trondheim → Tromsø → Alta → Molde): only the sea there right now, folded away
+    // (user, 17 Oct 2026).
+    const orig = (WX.sea_original || []).filter((o) => o.now && o.now.series && o.now.series.length);
+    const origPart = orig.length ? `<details class="spot"><summary><b>Original route (cancelled)</b> <span class="why">· the sea there right now</span></summary>
+        ${orig.map((o) => nowPart(o.now, esc(o.label))).join('')}</details>` : '';
     return `<h3 style="margin:0 0 4px">At sea <span class="why">· waves along the route</span></h3>
       <p class="hint" style="margin-top:0">How much the sea will move the ship on each crossing. Just look at <b>Feel</b>; waves = typical height of the bigger waves, period = seconds between two waves.</p>
-      ${blocks}
+      ${blocks}${origPart}
       <p class="hint">Feel: ${cmf('calm')} under 1.25 m, hardly noticeable · ${cmf('gentle')} 1.25–2.5 m, light motion · ${cmf('rough')} 2.5–4 m, noticeable rolling, seasick-prone take precautions · ${cmf('very rough')} over 4 m, some outer decks may close. One step worse when the period is 10 s or longer (long, slow waves roll even a big ship). Sky Princess is a 145,000-tonne ship with stabilisers. Source: Open-Meteo marine (ECMWF / Météo-France wave models), typical values ERA5.</p>`;
   }
 
