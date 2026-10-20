@@ -23,19 +23,19 @@
  },
  "digest_values": {
   "2026-10-21": {
-   "score": 0.286,
-   "rating": "FAIR"
+   "score": 0.704,
+   "rating": "GOOD"
   },
   "2026-10-22": {
-   "score": 0.159,
+   "score": 0.178,
    "rating": "LOW"
   },
   "2026-10-23": {
-   "score": 0.257,
-   "rating": "FAIR"
+   "score": 0.158,
+   "rating": "LOW"
   }
  },
- "digest_date": "2026-10-19",
+ "digest_date": "2026-10-20",
  "cmes_sent": [
   "2026-10-09T20:00:00Z",
   "2026-10-11T06:00:00Z",
@@ -50,7 +50,7 @@
  ],
  "change_day": "2026-10-20",
  "changes_today": 0,
- "updated": "2026-10-20T00:56:57Z",
+ "updated": "2026-10-20T06:18:01Z",
  "storm_days_sent": [
   "2026-10-19",
   "2026-10-18",
