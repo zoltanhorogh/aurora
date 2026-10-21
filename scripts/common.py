@@ -120,10 +120,26 @@ def kp_required(mlat):
     return max(0.0, min(9.0, (67.5 - mlat) / 1.8 + 0.5))
 
 
+_gfz_down = False
+
+
+def gfz_get_json(url):
+    """GFZ Potsdam with a short timeout, and only one try per run once it has failed: on 21 Oct 2026 the server hung,
+    every call took ~5 minutes and the forecast step hit its 9-minute limit, so nothing was saved for hours."""
+    global _gfz_down
+    if _gfz_down:
+        raise RuntimeError("GFZ unreachable earlier in this run")
+    try:
+        return http_get_json(url, timeout=20)
+    except Exception:
+        _gfz_down = True
+        raise
+
+
 def fetch_hp30(start, end):
     """GFZ Potsdam Hp30: half-hourly planetary activity (Kp-like scale), published ~30 min after each interval."""
-    js = http_get_json("https://kp.gfz-potsdam.de/app/json/"
-                       f"?start={iso(start)}&end={iso(end)}&index=Hp30")
+    js = gfz_get_json("https://kp.gfz-potsdam.de/app/json/"
+                      f"?start={iso(start)}&end={iso(end)}&index=Hp30")
     return [(parse_utc(t), float(v)) for t, v in zip(js.get("datetime", []), js.get("Hp30", [])) if v is not None]
 
 

@@ -7,8 +7,8 @@ import traceback
 from datetime import datetime, timedelta
 
 import last_night
-from common import (CONFIG, DATA, TROMSO, UTC, Route, cruise_day_from, darkness_end, fetch_hp30, http_get,
-                    http_get_json, iso, kp_required, load_json, mag_lat, moon_alt, moon_illum, night_dates,
+from common import (CONFIG, DATA, TROMSO, UTC, Route, cruise_day_from, darkness_end, fetch_hp30, gfz_get_json,
+                    http_get, http_get_json, iso, kp_required, load_json, mag_lat, moon_alt, moon_illum, night_dates,
                     night_end, night_hours, norm_cdf, parse_utc, save_json, sun_alt, utcnow)
 from build_climatology import CLEAR_MAX, DARK_SUN, clear_window
 
@@ -164,8 +164,8 @@ def fetch_kp_daily(now, days=60):
     """GFZ Potsdam's measured Kp, daily maximum, for the last `days` days: the 27-day chart shows two solar rotations
     of the past next to NOAA's outlook, so a repeating pattern can be seen (user, 15 Oct 2026). NOAA's own daily file
     only goes back 30 days."""
-    js = http_get_json("https://kp.gfz-potsdam.de/app/json/"
-                       f"?start={iso(now - timedelta(days=days))}&end={iso(now)}&index=Kp")
+    js = gfz_get_json("https://kp.gfz-potsdam.de/app/json/"
+                      f"?start={iso(now - timedelta(days=days))}&end={iso(now)}&index=Kp")
     out = {}
     for t, v in zip(js.get("datetime", []), js.get("Kp", [])):
         if v is not None:
